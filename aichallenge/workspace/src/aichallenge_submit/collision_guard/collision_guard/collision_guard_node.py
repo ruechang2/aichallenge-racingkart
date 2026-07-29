@@ -31,6 +31,8 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from v2x_msgs.msg import V2XVehiclePositionArray
 
+from collision_guard.geometry import project_onto_path
+
 
 def yaw_from_quaternion(q) -> float:
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
@@ -55,10 +57,45 @@ class CollisionGuard(Node):
         self._corridor_half_width = float(self.declare_parameter("corridor_half_width", 1.2).value)
         self._other_vehicle_radius = float(self.declare_parameter("other_vehicle_radius", 1.0).value)
         self._ego_front_offset = float(self.declare_parameter("ego_front_offset", 0.5).value)
+        # Bend the corridor along the arc the ego is actually on, instead of testing a
+        # straight box ahead. Without this the guard brakes for karts that are merely
+        # beside us or on the inside of a corner — which deadlocks any overtake, because
+        # the MPC steers around while the guard holds the car at 0 m/s.
+        self._curved_corridor = bool(self.declare_parameter("curved_corridor", True).value)
+        # Below this speed yaw_rate/v is too noisy, so curvature comes from the
+        # commanded steering angle instead. Assuming "straight" here would be wrong
+        # in the one case that matters most: stopped in front of a kart, with the
+        # controller already steering around it.
+        self._curvature_min_speed = float(self.declare_parameter("curvature_min_speed", 1.0).value)
+        # NOTE: the MPC's lateral input is a *curvature* (tan(delta)/L), which it writes
+        # straight into `steering_tire_angle` and scales by this gain. So the command
+        # converts to curvature by dividing by the gain — no tan()/wheel_base involved.
+        self._steer_gain = float(self.declare_parameter("steering_tire_angle_gain", 1.639).value)
+        self._max_curvature = float(self.declare_parameter("max_curvature", 0.6).value)
+        # Constant curvature is only a fair prediction for a limited sweep: on a tight
+        # arc the extrapolation curls right back into karts beside us and invents an
+        # emergency. Beyond this swept angle the obstacle is treated as not in path.
+        self._max_sweep_angle = float(self.declare_parameter("max_sweep_angle", 1.57).value)
+        # Never hold the car at a dead stop for an obstacle that is not an imminent
+        # impact: standing still forever cannot end the race, and the geometry can
+        # only change if we are allowed to move. Above `emergency_gap` the guard
+        # therefore always leaves at least this much speed.
+        self._creep_speed = float(self.declare_parameter("creep_speed", 1.0).value)
+        # Tolerance around the speed cap before the guard acts either way.
+        self._speed_deadband = float(self.declare_parameter("speed_deadband", 0.2).value)
+        # Acceleration allowed while still below the cap.
+        self._approach_accel = float(self.declare_parameter("approach_accel", 1.0).value)
+        # Constant curvature stops being a fair prediction far ahead, so cap how far the
+        # arc is extrapolated; beyond this the obstacle is simply ignored.
+        self._max_preview_distance = float(self.declare_parameter("max_preview_distance", 15.0).value)
         # Desired standing gap to the obstacle (target speed reaches 0 at this gap).
         self._standstill_gap = float(self.declare_parameter("standstill_gap", 3.0).value)
         # Below this clear distance -> emergency stop.
         self._emergency_gap = float(self.declare_parameter("emergency_gap", 1.5).value)
+        # ...but only for obstacles this close to our path centreline. A kart we are
+        # squeezing past sideways is close, yet stopping dead for it is wrong.
+        self._emergency_half_width = float(
+            self.declare_parameter("emergency_half_width", 1.0).value)
 
         # V2X handling.
         self._v2x_max_range = float(self.declare_parameter("v2x_max_range", 25.0).value)
@@ -122,12 +159,13 @@ class CollisionGuard(Node):
         return (now_t - msg_t) <= self._sensor_stale_sec
 
     # --- core ---
-    def _forward_clearance(self, ego_x, ego_y, yaw):
+    def _forward_clearance(self, ego_x, ego_y, yaw, kappa):
         """Return (min clear distance ahead in the corridor, emergency_flag)."""
         d_min = math.inf
         emergency = False
 
         hx, hy = math.cos(yaw), math.sin(yaw)  # heading unit vector
+        corridor = self._corridor_half_width + self._other_vehicle_radius
 
         # --- other karts via V2X ---
         if self._use_v2x and self._is_fresh(self._v2x):
@@ -138,12 +176,19 @@ class CollisionGuard(Node):
                     continue  # this is (approximately) us
                 lon = rx * hx + ry * hy            # forward distance
                 lat = -rx * hy + ry * hx           # left distance
-                if lon <= 0.0 or lon > self._v2x_max_range:
+                along, offset = project_onto_path(lon, lat, kappa)
+                if along <= 0.0 or along > min(self._v2x_max_range, self._max_preview_distance):
                     continue
-                if abs(lat) > self._corridor_half_width + self._other_vehicle_radius:
-                    continue
-                clear = lon - self._other_vehicle_radius - self._ego_front_offset
+                if along * abs(kappa) > self._max_sweep_angle:
+                    continue  # too far around the arc for the prediction to mean anything
+                if offset > corridor:
+                    continue  # not on our path — we are going around it
+                clear = along - self._other_vehicle_radius - self._ego_front_offset
                 d_min = min(d_min, clear)
+                # An emergency stop is only justified for something we are about to
+                # hit head-on, not for a kart we are steering past at close quarters.
+                if clear <= self._emergency_gap and offset <= self._emergency_half_width:
+                    emergency = True
 
         # --- walls via scan (last-resort, dead-ahead, short range) ---
         if self._use_scan and self._is_fresh(self._scan):
@@ -176,13 +221,27 @@ class CollisionGuard(Node):
         ego_x, ego_y = p.position.x, p.position.y
         yaw = yaw_from_quaternion(p.orientation)
 
-        d_min, emergency = self._forward_clearance(ego_x, ego_y, yaw)
+        # Curvature of the path the ego is on. Prefer the measured yaw rate, which
+        # needs no assumption about the controller's steering gain; fall back to the
+        # commanded steering when too slow for yaw_rate/v to mean anything.
+        kappa = 0.0
+        if self._curved_corridor:
+            v = self._odom.twist.twist.linear.x
+            if abs(v) >= self._curvature_min_speed:
+                kappa = self._odom.twist.twist.angular.z / v
+            elif self._steer_gain > 0.0:
+                kappa = msg.lateral.steering_tire_angle / self._steer_gain
+            kappa = max(-self._max_curvature, min(self._max_curvature, kappa))
+
+        d_min, emergency = self._forward_clearance(ego_x, ego_y, yaw, kappa)
 
         if math.isinf(d_min):
             self._pub.publish(out)  # nothing ahead -> transparent
             return
 
-        if emergency or d_min <= self._emergency_gap:
+        # Only the sources decide an emergency: they know whether the obstacle is
+        # actually in front of us or merely close alongside.
+        if emergency:
             out.longitudinal.speed = 0.0
             out.longitudinal.acceleration = -abs(self._emergency_decel)
             self.get_logger().warn(
@@ -193,12 +252,27 @@ class CollisionGuard(Node):
         # Safe speed so the ego can stop within (clearance - standstill_gap).
         eff = max(d_min - self._standstill_gap, 0.0)
         v_safe = math.sqrt(2.0 * self._brake_decel * eff)
+        # Past the emergency gap this is a "slow down", never a "stop dead": holding
+        # the car at zero would freeze the geometry and strand it there for good.
+        v_safe = max(v_safe, self._creep_speed)
 
         if msg.longitudinal.speed > v_safe:
             out.longitudinal.speed = v_safe
-            out.longitudinal.acceleration = -abs(self._brake_decel)
+            # The vehicle follows the *acceleration* command, so it has to agree with
+            # the speed cap we just imposed. Braking whenever the cap bites would pin
+            # the car at a standstill even while the cap says "creep": it would be
+            # commanded backwards at -brake_decel and never reach the target at all.
+            ego_v = self._odom.twist.twist.linear.x
+            if ego_v > v_safe + self._speed_deadband:
+                out.longitudinal.acceleration = -abs(self._brake_decel)
+            elif ego_v < v_safe - self._speed_deadband:
+                out.longitudinal.acceleration = min(
+                    msg.longitudinal.acceleration, self._approach_accel)
+            else:
+                out.longitudinal.acceleration = 0.0
             self.get_logger().info(
-                f"slow: cap {v_safe:.2f} m/s (obstacle {d_min:.2f} m ahead)",
+                f"slow: cap {v_safe:.2f} m/s (obstacle {d_min:.2f} m ahead, "
+                f"ego {ego_v:.2f} m/s)",
                 throttle_duration_sec=1.0)
 
         self._pub.publish(out)

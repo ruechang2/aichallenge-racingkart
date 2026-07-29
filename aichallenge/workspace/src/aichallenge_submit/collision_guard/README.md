@@ -44,6 +44,48 @@ line + MPC already keep the ego off the walls (0 wall collisions in testing), so
 the wall branch stays disabled until a clean scan source is available. The V2X
 kart guard is geometrically sound and stays enabled.
 
+## Curved corridor (2026-07-29)
+
+The corridor used to be a straight box ahead, which made overtaking impossible:
+a kart merely *beside* us, or on the inside of a corner, read as "in path", so the
+guard held the car at 0 m/s while the MPC steered around it. Obstacles are now
+projected onto the **arc the ego is actually on** (`geometry.project_onto_path`),
+so a kart we are going around leaves the corridor as soon as we turn away.
+
+Curvature comes from the measured yaw rate, falling back to the commanded
+steering below `curvature_min_speed` — the case that matters most is *stopped in
+front of a kart with the controller already steering around it*, where a straight
+corridor is exactly wrong.
+
+Three things this exposed, all worth remembering:
+
+- **The MPC's lateral command is a curvature, not an angle.** `u[1]` is
+  `tan(delta)/L` and is written straight into `steering_tire_angle`, then scaled by
+  `steering_tire_angle_gain`. Converting it with `tan()/wheel_base` is wrong.
+- **Constant curvature is only a fair prediction for a limited sweep.** On a tight
+  arc the extrapolation curls back into karts beside us and invents an emergency —
+  hence `max_sweep_angle`.
+- **The vehicle follows the acceleration command.** Capping `speed` while still
+  commanding `-brake_decel` pins the car at a standstill. The commanded
+  acceleration must agree with the speed cap.
+
+## Status: not yet validated in traffic
+
+The lateral avoidance path (`use_obstacle_avoidance`, now defaulted **on**) has
+**not** been shown to work end to end. In the hardest test — two karts parked
+across the track at the grid (`SIM_MODE=dev3`, Autoware on d1 only) — the ego now
+creeps and steers instead of deadlocking, but still ends up emergency-stopping and
+completed **0 laps**. Do not treat this as race-ready. Open questions:
+
+- `emergency_gap` 1.5 m / `emergency_half_width` 1.0 m may still be too eager for
+  threading a gap between two karts.
+- The parked-at-the-grid case is harsher than production, where all karts move off.
+  The realistic test (2 vehicles, both stacks, opponent slowed via
+  `ros2 param set /mpc_controller v_max 18.0` on its domain) has not been run.
+- No clear-track regression run yet: avoidance costs 6.9 ms mean / 10.3 ms p95 of
+  the 25 ms control budget (`scripts/bench_avoidance.py`), so the sub-40 s lap time
+  needs re-confirming with it enabled.
+
 ## Key parameters (`config/collision_guard.param.yaml`)
 
 | param | meaning |
@@ -51,5 +93,8 @@ kart guard is geometrically sound and stays enabled.
 | `brake_decel` | decel used to compute the safe speed |
 | `standstill_gap` | gap at which target speed reaches 0 |
 | `emergency_gap` | clearance below which a full stop is commanded |
-| `corridor_half_width` | lateral half-width of the "ahead" corridor |
-| `time via standstill_gap` | (adaptive slowdown is distance-based) |
+| `emergency_half_width` | ...but only for obstacles this close to the path centreline |
+| `corridor_half_width` | lateral half-width of the corridor, measured off the arc |
+| `curved_corridor` | project obstacles onto the ego's arc instead of a straight box |
+| `max_sweep_angle` | ignore obstacles further than this far around the arc |
+| `creep_speed` | floor on the capped speed, so the car can never be stranded |

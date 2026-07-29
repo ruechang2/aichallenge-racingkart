@@ -123,6 +123,8 @@ class MPCController(Node):
     BUG_VEL = 40.0 # km/h
     BUG_ACC = 400.0
 
+    TRAFFIC_LOG_RANGE = 25.0  # m, only log karts this close ahead
+
     SHOW_PLOT_ANIMATION = False
     PLOT_RESULTS = False
     ANIMATION_INTERVAL = 20
@@ -463,6 +465,7 @@ class MPCController(Node):
         self._path_constraints = None
 
         # Obstacles
+        self._n_corridor_obstacles = 0
         if self.USE_OBSTACLE_AVOIDANCE:
             self._static_obstacles: List[Obstacle] = create_obstacles()
             self._dynamic_obstacles: List[Obstacle] = []
@@ -654,6 +657,36 @@ class MPCController(Node):
             predictions, self._v2x_vehicle_radius)
         self._obstacles_updated = True
 
+    def _nearest_kart_ahead(self, pose) -> Optional[Tuple[str, float, float]]:
+        """Nearest V2X kart in front of the ego, as (id, ahead_m, lateral_m).
+
+        Lateral is signed in the ego frame (+ left), so the sign says which way
+        the MPC has to go to get past it.
+        """
+        best = None
+        cos_t, sin_t = np.cos(pose.theta), np.sin(pose.theta)
+        for vid, (x, y) in self._v2x_tracker.latest_positions().items():
+            dx, dy = x - pose.x, y - pose.y
+            ahead = dx * cos_t + dy * sin_t
+            lateral = -dx * sin_t + dy * cos_t
+            if ahead <= 0.0:
+                continue
+            if best is None or ahead < best[1]:
+                best = (vid, ahead, lateral)
+        return best
+
+    def _log_traffic(self, pose) -> None:
+        near = self._nearest_kart_ahead(pose)
+        if near is None:
+            return
+        vid, ahead, lateral = near
+        if ahead > self.TRAFFIC_LOG_RANGE:
+            return
+        self.get_logger().info(
+            f"traffic: kart '{vid}' {ahead:.1f} m ahead, {lateral:+.2f} m lateral; "
+            f"{self._n_corridor_obstacles} obstacle points in corridor",
+            throttle_duration_sec=1.0)
+
     def _filter_obstacles_to_corridor(self, obstacles: List[Obstacle]) -> List[Obstacle]:
         if not obstacles or self._waypoint_xy.size == 0:
             return obstacles
@@ -841,6 +874,7 @@ class MPCController(Node):
             filtered_dynamic = self._filter_obstacles_to_corridor(self._dynamic_obstacles)
             self._map.add_obstacles(self._static_obstacles + filtered_dynamic)
             self._reference_path.reset_dynamic_constraints()
+            self._n_corridor_obstacles = len(filtered_dynamic)
 
         is_colliding = False
         if self._last_colliding_time is not None:
@@ -850,6 +884,9 @@ class MPCController(Node):
 
         pose = odom_to_pose_2d(self._odom) # type: ignore
         v = self._odom.twist.twist.linear.x
+
+        if self.USE_OBSTACLE_AVOIDANCE:
+            self._log_traffic(pose)
 
         self._car.update_states(pose.x, pose.y, pose.theta)
         # print(f"car x: {self._car.temporal_state.x}, y: {self._car.temporal_state.y}, psi: {self._car.temporal_state.psi}")

@@ -8,15 +8,40 @@
     use_scan_guard: false    # avoid walls ahead (from /scan); last-resort AEB only
 
     # Longitudinal safety
-    brake_decel: 2.0         # [m/s^2] deceleration assumed when computing the safe speed
-    emergency_decel: 3.0     # [m/s^2] commanded on emergency stop (vehicle model clamps actual)
+    # Braking is not what limits this kart: measured decel reaches -4.1 m/s^2 while
+    # acceleration is power-limited to ~0.4, so a late, firm brake costs far less
+    # lap time than an early, gentle one.
+    brake_decel: 3.5         # [m/s^2] deceleration assumed when computing the safe speed
+    emergency_decel: 4.0     # [m/s^2] commanded on emergency stop (vehicle model clamps actual)
 
     # Ahead-corridor geometry
-    corridor_half_width: 1.2 # [m] half-width of the travel corridor for karts
-    other_vehicle_radius: 1.0 # [m] kart footprint radius
+    # Tight enough to allow a side-by-side pass: the kart is 1.45 m wide, so two karts
+    # abreast need ~1.5 m of lateral separation. 1.2 + 1.0 = 2.2 m used to brake for
+    # anything ahead on a 6 m track and made overtaking impossible.
+    corridor_half_width: 0.9 # [m] half-width of the travel corridor for karts
+    other_vehicle_radius: 0.9 # [m] kart footprint radius
     ego_front_offset: 0.5    # [m] base_link -> front bumper
-    standstill_gap: 3.0      # [m] target gap where speed reaches 0
+    standstill_gap: 2.0      # [m] target gap where speed reaches 0
     emergency_gap: 1.5       # [m] below this clearance -> full emergency stop
+    emergency_half_width: 1.0 # [m] ...but only if this close to our path centreline
+
+    # Curved corridor: test obstacles against the arc the ego is on, not a straight
+    # box. This is what lets the MPC steer around a kart without the guard braking.
+    curved_corridor: true
+    curvature_min_speed: 1.0 # [m/s] below this, use commanded steering instead of yaw rate
+    # The MPC's lateral input is a curvature (tan(delta)/L) written into
+    # steering_tire_angle and scaled by this gain, so command -> curvature is a plain
+    # division. It is NOT an angle; do not apply tan()/wheel_base to it.
+    steering_tire_angle_gain: 1.639
+    max_curvature: 0.6       # [1/m] clamp; tan(32 deg)/1.087 = 0.58
+    max_sweep_angle: 1.57    # [rad] ignore obstacles more than this far around the arc
+    max_preview_distance: 15.0 # [m] constant curvature is not a fair prediction beyond this
+    # Floor on the capped speed outside the emergency gap. A hard 0 can deadlock the
+    # car forever: stopped short of a kart, the geometry never changes, so it never
+    # gets to move again. Creeping lets the controller work its way around.
+    creep_speed: 1.0         # [m/s]
+    speed_deadband: 0.2      # [m/s] tolerance around the cap before acting either way
+    approach_accel: 1.0      # [m/s^2] allowed while still below the cap
 
     # V2X handling
     v2x_max_range: 25.0      # [m] ignore karts farther than this

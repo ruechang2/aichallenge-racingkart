@@ -11,6 +11,10 @@
   <!-- Track selection: kashiwanoha assets live in a <track>/ subdir; citycircuit uses the package default paths.
        Switch tracks by editing this default (and match it with the simulator's venue arg); pass track:= to override. -->
   <arg name="track" default="citycircuit" description="track preset: citycircuit, kashiwanoha"/>
+  <!-- Lateral avoidance: feed V2X kart positions to the MPC as obstacles so it steers around
+       them. Longitudinal backstop is collision_guard, which is independent of this. -->
+  <arg name="use_obstacle_avoidance" default="true" description="steer around other karts (V2X)"/>
+  <arg name="use_collision_guard" default="true" description="longitudinal AEB / speed cap"/>
   <arg name="track_subdir" default="$(eval &quot;'' if '$(var track)' == 'citycircuit' else '$(var track)/'&quot;)"/>
   <!-- Map -->
   <arg name="lanelet2_map_file" default="$(var track_subdir)lanelet2_map.osm" description="lanelet2 map file name"/>
@@ -148,6 +152,8 @@
     <include file="$(find-pkg-share aichallenge_submit_launch)/launch/control/mpc.launch.xml">
       <arg name="use_sim_time" value="$(var use_sim_time)"/>
       <arg name="track" value="$(var track)"/>
+      <arg name="use_obstacle_avoidance" value="$(var use_obstacle_avoidance)"/>
+      <arg name="use_collision_guard" value="$(var use_collision_guard)"/>
     </include>
   </group>
 

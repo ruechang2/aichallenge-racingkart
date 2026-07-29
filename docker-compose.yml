@@ -15,6 +15,8 @@ x-autoware-base: &autoware-base
     - TZ=Asia/Tokyo
     - RUN_MODE=${RUN_MODE:-}
     - SIM_MODE=${SIM_MODE:-}
+    # NPCカート数。dev.sh が --npcs に渡す。回避機能のテスト用（本番相当は NPCS=2）。
+    - NPCS=${NPCS:-}
     - CMD=${CMD:-}
     - COLCON_TRACE=${COLCON_TRACE:-}
     - ROS_HOME=${ROS_HOME:-}

@@ -5,13 +5,16 @@ export ROS_DOMAIN_ID=0
 
 # 車両数: 第1引数（既定 1）
 vehicles="${1:-1}"
+# NPCカート数: 第2引数 または NPCS 環境変数（既定 0）。
+# 本番は他チームのカート2台と混走するので、回避のテストには NPCS=2 を使う。
+npcs="${2:-${NPCS:-0}}"
 
 exec $AWSIM_DIRECTORY/AWSIM.x86_64 \
     --venue citycircuit \
     --start-mode count \
     --start-count-seconds 5 \
     --vehicles "${vehicles}" \
-    --npcs 0 \
+    --npcs "${npcs}" \
     --boosts 2 \
     --laps unlimited \
     --timeout 10000000.0 \

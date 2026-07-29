@@ -86,6 +86,16 @@ class V2XVehicleTracker:
     def active_vehicle_ids(self) -> List[str]:
         return list(self._active)
 
+    def latest_positions(self) -> Dict[str, Tuple[float, float]]:
+        """Most recent (x, y) of every currently active vehicle."""
+        out: Dict[str, Tuple[float, float]] = {}
+        for vid in self._active:
+            buf = self._samples.get(vid)
+            if buf:
+                _t, x, y = buf[-1]
+                out[vid] = (x, y)
+        return out
+
     def predict_all(self, t_samples) -> Dict[str, List[Tuple[float, float]]]:
         return {vid: self.predict_positions(vid, t_samples) for vid in self._active}
 
