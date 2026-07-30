@@ -77,11 +77,21 @@ across the track at the grid (`SIM_MODE=dev3`, Autoware on d1 only) — the ego 
 creeps and steers instead of deadlocking, but still ends up emergency-stopping and
 completed **0 laps**. Do not treat this as race-ready. Open questions:
 
-- `emergency_gap` 1.5 m / `emergency_half_width` 1.0 m may still be too eager for
-  threading a gap between two karts.
-- The parked-at-the-grid case is harsher than production, where all karts move off.
-  The realistic test (2 vehicles, both stacks, opponent slowed via
-  `ros2 param set /mpc_controller v_max 18.0` on its domain) has not been run.
+- **The MPC does not steer away at all in this scenario, and that is the real
+  failure** — the emergency stop is a symptom. Measured: ego frozen at 0 m/s with
+  a kart 2.7 m ahead and only 0.69 m off its centreline, i.e. genuinely aimed at
+  it, so the emergency is *correct*. Suspect the standing start: this spatial MPC
+  parametrises by path position and needs forward motion to plan, so the corridor
+  narrowing may never produce an avoidance path from rest. Not confirmed.
+- The parked-at-the-grid case is harsher than production, where all karts move off
+  together. **The realistic moving-traffic test could not be run on this machine**:
+  two Autoware stacks plus AWSIM saturate 8 cores (load average 12-19, both MPC
+  processes pinned at ~96%), and neither kart completed a lap — that measures CPU
+  starvation, not control. Killing rviz did not recover enough headroom.
+- **Recommended next step:** test with a *synthetic* V2X publisher — a small node
+  that injects a virtual kart moving along `traj_mincurv.csv` at a chosen speed.
+  No second Autoware stack, so no CPU problem, and it is deterministic and
+  reproducible. That is the harness this feature actually needs.
 - No clear-track regression run yet: avoidance costs 6.9 ms mean / 10.3 ms p95 of
   the 25 ms control budget (`scripts/bench_avoidance.py`), so the sub-40 s lap time
   needs re-confirming with it enabled.

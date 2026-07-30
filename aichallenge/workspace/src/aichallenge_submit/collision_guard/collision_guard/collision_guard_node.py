@@ -176,6 +176,21 @@ class CollisionGuard(Node):
                     continue  # this is (approximately) us
                 lon = rx * hx + ry * hy            # forward distance
                 lat = -rx * hy + ry * hx           # left distance
+
+                # An emergency stop means "about to hit this head-on", which is only a
+                # question over the next metre or two — and over that distance the arc
+                # buys nothing while costing robustness. At creep speed with saturated
+                # steering the arc model is close to meaningless (tight radius, noisy
+                # curvature) and was firing emergencies at karts we were threading
+                # between, so the emergency test deliberately uses the straight
+                # heading and a footprint-width gate.
+                straight_clear = lon - self._other_vehicle_radius - self._ego_front_offset
+                if (0.0 < lon and straight_clear <= self._emergency_gap
+                        and abs(lat) <= self._emergency_half_width):
+                    emergency = True
+                    d_min = min(d_min, straight_clear)
+                    continue
+
                 along, offset = project_onto_path(lon, lat, kappa)
                 if along <= 0.0 or along > min(self._v2x_max_range, self._max_preview_distance):
                     continue
@@ -185,10 +200,6 @@ class CollisionGuard(Node):
                     continue  # not on our path — we are going around it
                 clear = along - self._other_vehicle_radius - self._ego_front_offset
                 d_min = min(d_min, clear)
-                # An emergency stop is only justified for something we are about to
-                # hit head-on, not for a kart we are steering past at close quarters.
-                if clear <= self._emergency_gap and offset <= self._emergency_half_width:
-                    emergency = True
 
         # --- walls via scan (last-resort, dead-ahead, short range) ---
         if self._use_scan and self._is_fresh(self._scan):
