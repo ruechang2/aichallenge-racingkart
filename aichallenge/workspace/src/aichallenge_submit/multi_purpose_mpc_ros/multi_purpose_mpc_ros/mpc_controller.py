@@ -124,6 +124,7 @@ class MPCController(Node):
     BUG_ACC = 400.0
 
     TRAFFIC_LOG_RANGE = 25.0  # m, only log karts this close ahead
+    TRAFFIC_LOG_HALF_WIDTH = 5.0  # m, and only this far off our heading axis
 
     SHOW_PLOT_ANIMATION = False
     PLOT_RESULTS = False
@@ -680,7 +681,10 @@ class MPCController(Node):
         if near is None:
             return
         vid, ahead, lateral = near
-        if ahead > self.TRAFFIC_LOG_RANGE:
+        # A kart abeam of us projects to ahead ~ 0 with a huge lateral in the ego
+        # frame — an artefact of the projection, not a near miss. Only report karts
+        # that are plausibly on our part of the track, or the log is just noise.
+        if ahead > self.TRAFFIC_LOG_RANGE or abs(lateral) > self.TRAFFIC_LOG_HALF_WIDTH:
             return
         self.get_logger().info(
             f"traffic: kart '{vid}' {ahead:.1f} m ahead, {lateral:+.2f} m lateral; "

@@ -69,7 +69,29 @@ Three things this exposed, all worth remembering:
   commanding `-brake_decel` pins the car at a standstill. The commanded
   acceleration must agree with the speed cap.
 
-## Status: not yet validated in traffic
+## Status: works on a kart in the way; grid-start-from-rest still fails
+
+Validated 2026-07-30 with `scripts/fake_v2x_publisher.py` (a synthetic V2X kart, so
+no second Autoware stack is needed):
+
+| scenario | result |
+|----------|--------|
+| clear track, avoidance ON | 39.27 / 39.38 / 39.50 s — **no regression** vs 39.5 s median |
+| kart parked on the racing line mid-lap (`d2:0:120`) | **8/8 laps**, mean 40.50 s, max 41.09 s, **0 emergency stops**, 12 progressive slowdowns |
+
+Cost of going around a blocking kart: **1.11 s per lap**. The guard's slowdown is
+progressive and releases as the MPC steers away — measured on approach: capped to
+9.0 m/s at 13.6 m, 8.7 at 12.7, 5.2 at 5.9, 3.7 at 3.9, then through.
+
+**Still failing:** two karts parked across the track *at the grid*, with the ego
+starting from **rest** behind them (`SIM_MODE=dev3`, Autoware on d1 only) — 0 laps.
+That the same car now clears a parked kart mid-lap at racing speed strongly
+suggests the failure is specific to planning from a standstill: this spatial MPC
+parametrises by path position, so with no forward motion the corridor narrowing
+never yields an avoidance path. Production starts all karts moving off together,
+so this is a lower-priority gap — but it is a real one, e.g. after a spin.
+
+## Earlier status (superseded)
 
 The lateral avoidance path (`use_obstacle_avoidance`, now defaulted **on**) has
 **not** been shown to work end to end. In the hardest test — two karts parked
