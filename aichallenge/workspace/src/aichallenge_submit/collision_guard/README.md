@@ -83,13 +83,37 @@ Cost of going around a blocking kart: **1.11 s per lap**. The guard's slowdown i
 progressive and releases as the MPC steers away — measured on approach: capped to
 9.0 m/s at 13.6 m, 8.7 at 12.7, 5.2 at 5.9, 3.7 at 3.9, then through.
 
-**Still failing:** two karts parked across the track *at the grid*, with the ego
-starting from **rest** behind them (`SIM_MODE=dev3`, Autoware on d1 only) — 0 laps.
-That the same car now clears a parked kart mid-lap at racing speed strongly
-suggests the failure is specific to planning from a standstill: this spatial MPC
-parametrises by path position, so with no forward motion the corridor narrowing
-never yields an avoidance path. Production starts all karts moving off together,
-so this is a lower-priority gap — but it is a real one, e.g. after a spin.
+### Small speed differential: the ego gets stuck behind, and the MPC is the cause
+
+Tested with an opponent at 28 km/h — under 1 m/s slower than the ego's 31.4 km/h
+average, so the two run together for a long time (`d2:28:20`):
+
+| run | result |
+|-----|--------|
+| first | 3 laps at **42.17 / 42.50 / 44.75 s**, 71 slowdowns, 0 emergencies — the ego *trails* rather than passing, losing 3-5 s/lap |
+| second | 1 lap, then **stopped dead and never restarted** |
+
+The stop is **not** the guard: it was capping to 3.9-4.0 m/s while the ego sat at
+0.00 m/s, i.e. permitting four times the speed the car was doing. The command chain
+shows the MPC itself commanding the stop, and its own logs say why —
+**111 × `Relaxed safety margin ... to solve the problem`** and **7 ×
+`Infeasible path detected`**, the branch in `update_path_constraints` that pins
+`ub_sm = lb_sm = 0.0`, i.e. a zero-width corridor.
+
+So the corridor narrowing turns infeasible when a kart is close ahead at low speed,
+the QP degenerates, and the MPC outputs a stop it cannot recover from. This is the
+same failure as the grid start below — **planning from (near) standstill with an
+obstacle in the corridor** — and it is now the single blocking defect for racing in
+traffic. It is an MPC/corridor problem, not a guard problem.
+
+Likely directions: keep a minimum corridor width rather than collapsing to zero;
+shrink the obstacle inflation (`v2x_obstacle_avoidance.vehicle_radius`, currently
+0.5 m, plus `bicycle_model.width` 1.70) so a kart on the line still leaves a
+drivable gap; or fall back to pure longitudinal following when no feasible lateral
+gap exists, instead of emitting an infeasible problem.
+
+**Also still failing:** two karts parked across the track *at the grid* with the ego
+starting from rest (`SIM_MODE=dev3`, Autoware on d1 only) — 0 laps. Same root cause.
 
 ## Earlier status (superseded)
 
