@@ -12,8 +12,17 @@
        Switch tracks by editing this default (and match it with the simulator's venue arg); pass track:= to override. -->
   <arg name="track" default="citycircuit" description="track preset: citycircuit, kashiwanoha"/>
   <!-- Lateral avoidance: feed V2X kart positions to the MPC as obstacles so it steers around
-       them. Longitudinal backstop is collision_guard, which is independent of this. -->
-  <arg name="use_obstacle_avoidance" default="true" description="steer around other karts (V2X)"/>
+       them. Longitudinal backstop is collision_guard, which is independent of this.
+
+       DEFAULT OFF, deliberately. With it on, the car cannot pull away from a standing
+       start when other karts are close by: the corridor narrowing goes infeasible at
+       low speed and the MPC emits a stop it never recovers from (measured, 0 laps —
+       see collision_guard/README.md). That is exactly the race start, with two karts
+       alongside on the grid, so shipping this enabled means not completing a lap.
+       It is validated only for avoiding a kart encountered mid-lap, at speed.
+       Turn it on with use_obstacle_avoidance:=true once the standing-start case is
+       fixed. -->
+  <arg name="use_obstacle_avoidance" default="false" description="steer around other karts (V2X)"/>
   <arg name="use_collision_guard" default="true" description="longitudinal AEB / speed cap"/>
   <arg name="track_subdir" default="$(eval &quot;'' if '$(var track)' == 'citycircuit' else '$(var track)/'&quot;)"/>
   <!-- Map -->
