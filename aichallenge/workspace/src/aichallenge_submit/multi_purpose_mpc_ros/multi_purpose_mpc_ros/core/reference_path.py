@@ -984,13 +984,22 @@ class ReferencePath:
         #     show = True
         #     self.COUNT = 0
 
-        # NOTE: ub_sm/lb_sm は add_constraint の clamp で「これまでに見た最も狭い値」に
-        # 単調に絞り込まれ、reset_dynamic_constraints() は障害物更新時 (10 Hz) にしか
-        # 呼ばれない。この関数は制御周期 (40 Hz) ごとに走るので、リセットの合間に
-        # コリドーがラチェットのように閉じうる。ホライゾン内だけ毎周期 static に戻す
-        # 修正を試したが、障害物のないクリアラップでも 3 周目に car が停止したため
-        # 取り消した (wp.dynamic_border_cells は連動してリセットされず、境界セルと
-        # bounds が食い違うのが原因と思われる)。触るなら両者を揃えて直すこと。
+        # 既知の不具合: コリドーは狭くなる一方で二度と広がらない。
+        #   add_constraint の clamp が「新しく計算した境界」と「waypoint に保存済みの
+        #   境界」の狭い方を採用し、それを wp.ub_sm/lb_sm に書き戻すため。
+        # これを戻すのは reset_dynamic_constraints() だけだが、その呼び出し条件は
+        # mpc_controller の _obstacles_updated で、これを True にするのは _v2x_callback
+        # のみ (初期値は obstacles.csv_path が空なので False)。つまり他車が V2X を
+        # 流していないとリセットは一度も走らず、waypoint ごとの境界が走行中ずっと
+        # 単調に狭まっていく。壁を 1 つ避けるとその付近の waypoint に狭い値が焼き付き、
+        # 次の壁を避ける横方向の余地が残らなくなる。他車がいる場合もリセットは 10 Hz、
+        # 締め付けはこの関数の 40 Hz なので、緩い形で同じことが起きる。
+        #
+        # ホライゾン内の wp.ub_sm/lb_sm を毎周期 static に戻す修正を試したが、障害物の
+        # ないクリアラップでも 3 周目に車が停止したため取り消した。停止の理由は未解明。
+        # (当初 dynamic_border_cells の不整合を疑ってコメントに残していたが、これは誤り
+        #  だった。_compute_free_segments が読むのは static_border_cells で、
+        #  dynamic_border_cells は可視化と publish にしか使われていない。)
 
         # compute free segments for each waypoints in horizon
         free_segments_hor = []
