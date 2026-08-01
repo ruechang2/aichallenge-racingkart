@@ -115,13 +115,15 @@ class SimpleSpatialState(SpatialState):
 ####################################
 
 class SpatialBicycleModel(ABC):
-    def __init__(self, reference_path, length, width, Ts):
+    def __init__(self, reference_path, length, width, Ts, safety_margin=None):
         """
         Abstract Base Class for Spatial Reformulation of Bicycle Model.
         :param reference_path: reference path object to follow
         :param length: length of car in m
         :param width: width of car in m
         :param Ts: sampling time of model
+        :param safety_margin: lateral clearance kept on each side of the car in m.
+        None keeps the legacy width/sqrt(2).
         """
 
         # Precision
@@ -130,7 +132,8 @@ class SpatialBicycleModel(ABC):
         # Car Parameters
         self.length = length
         self.width = width
-        self.safety_margin = self._compute_safety_margin()
+        self.safety_margin = (self._compute_safety_margin()
+                              if safety_margin is None else float(safety_margin))
 
         # Reference Path
         self.reference_path = reference_path
@@ -366,7 +369,7 @@ class SpatialBicycleModel(ABC):
 #################
 
 class BicycleModel(SpatialBicycleModel):
-    def __init__(self, reference_path, length, width, Ts):
+    def __init__(self, reference_path, length, width, Ts, safety_margin=None):
         """
         Simplified Spatial Bicycle Model. Spatial Reformulation of Kinematic
         Bicycle Model. Uses Simplified Spatial State.
@@ -378,7 +381,8 @@ class BicycleModel(SpatialBicycleModel):
 
         # Initialize base class
         super(BicycleModel, self).__init__(reference_path, length=length,
-                                           width=width, Ts=Ts)
+                                           width=width, Ts=Ts,
+                                           safety_margin=safety_margin)
 
         # Initialize spatial state
         self.spatial_state = SimpleSpatialState()

@@ -39,6 +39,13 @@ bicycle_model:
   width: 1.70   # +safety margin. 2.30 left so little corridor that the MPC repeatedly logged
                 # "Relaxed safety margin ... to solve the problem", i.e. the QP went infeasible
                 # and the corner line was dictated by the corridor rather than by grip.
+  # Lateral clearance kept on EACH side when fitting the car through a gap. The legacy
+  # default is width/sqrt(2) = 1.20 m, which demands 1.70 + 2*1.20 = 4.1 m of free
+  # corridor — more than the ~2.5 m gap either side of a kart sitting on the racing
+  # line of a 6 m track. That made overtaking geometrically impossible and left the
+  # corridor teetering on the feasibility threshold, which is what stalled the car in
+  # traffic. 0.85 = half the real 1.45 m body plus ~0.13 m clearance.
+  safety_margin: 0.85
 
 mpc:
   N: 20

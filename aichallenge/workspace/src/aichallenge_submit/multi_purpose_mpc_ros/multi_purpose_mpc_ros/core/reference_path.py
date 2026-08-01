@@ -930,10 +930,16 @@ class ReferencePath:
 
             # Check feasibility of the path after subtracting safety margin
             if ub_sm < lb_sm:
-                # 一つ前のifの判定でboundsは正常になっているはずなので、こちらの判定に入る場合は何らかの実装上の異常がある
-                print("!!!! Infeasible path detected !!!!")
-                ub_sm = 0.0
-                lb_sm = 0.0
+                # 幅ゼロのコリドー (0.0, 0.0) を返すと e_y が厳密に 0 に固定され、
+                # 車体が少しでもラインから外れていると QP が実行不能になる。MPC は
+                # 復帰不能な停止を出力し、前方にカートがいる低速時に car が二度と
+                # 動けなくなる。ここでは静的な走行可能領域まで緩めて必ず解ける問題を
+                # 渡し、縦方向の安全は collision_guard に任せる。
+                ub_sm = wp.ub
+                lb_sm = wp.lb
+                if ub_sm < lb_sm:
+                    mid = 0.5 * (ub_sm + lb_sm)
+                    ub_sm = lb_sm = mid
 
             # Compute absolute angle of bound cell
             angle_ub = np.mod(math.pi / 2 + wp.psi + math.pi,
@@ -977,6 +983,14 @@ class ReferencePath:
         # if self.COUNT == 100:
         #     show = True
         #     self.COUNT = 0
+
+        # NOTE: ub_sm/lb_sm は add_constraint の clamp で「これまでに見た最も狭い値」に
+        # 単調に絞り込まれ、reset_dynamic_constraints() は障害物更新時 (10 Hz) にしか
+        # 呼ばれない。この関数は制御周期 (40 Hz) ごとに走るので、リセットの合間に
+        # コリドーがラチェットのように閉じうる。ホライゾン内だけ毎周期 static に戻す
+        # 修正を試したが、障害物のないクリアラップでも 3 周目に car が停止したため
+        # 取り消した (wp.dynamic_border_cells は連動してリセットされず、境界セルと
+        # bounds が食い違うのが原因と思われる)。触るなら両者を揃えて直すこと。
 
         # compute free segments for each waypoints in horizon
         free_segments_hor = []

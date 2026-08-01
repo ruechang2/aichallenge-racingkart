@@ -106,11 +106,46 @@ same failure as the grid start below — **planning from (near) standstill with 
 obstacle in the corridor** — and it is now the single blocking defect for racing in
 traffic. It is an MPC/corridor problem, not a guard problem.
 
-Likely directions: keep a minimum corridor width rather than collapsing to zero;
-shrink the obstacle inflation (`v2x_obstacle_avoidance.vehicle_radius`, currently
-0.5 m, plus `bicycle_model.width` 1.70) so a kart on the line still leaves a
-drivable gap; or fall back to pure longitudinal following when no feasible lateral
-gap exists, instead of emitting an infeasible problem.
+#### Root cause found and fixed: the safety margin made passing geometrically impossible
+
+`BicycleModel.safety_margin` was hard-coded to `width / sqrt(2)` = **1.202 m**, applied
+to *each* side on top of the 1.70 m width. Using a gap therefore demanded
+`1.70 + 2 x 1.202 = 4.1 m` of free corridor, but the gap either side of a kart on the
+racing line of a ~6 m track is only about **2.5 m**. The arithmetic in
+`add_constraint` landed on `segment_length_sm = 2.5 - 2.40 = 0.10 m`, exactly the
+`min_segment_length` threshold — so the corridor flickered between "usable" and
+"infeasible", which is what collapsed it to zero width and stalled the car.
+
+`safety_margin` is now a `bicycle_model` config key (default unchanged at
+`width/sqrt(2)`), set to **0.85** = half the real 1.45 m body plus ~0.13 m clearance.
+That turns the 0.10 m knife-edge into a 0.80 m margin. The zero-width collapse also
+now degrades to the static track bounds instead of pinning `e_y` to exactly 0.
+
+**Measured effect (2026-08-01):**
+
+| scenario | before | after |
+|----------|--------|-------|
+| clear track | 39.3-39.5 s | **39.41-39.85 s over 6 laps — no regression** |
+| opponent at 28 km/h | 42.17 / 42.50 / 44.75 s, 71 slowdowns, then **permanent stall** | 39.30-39.61 s over 5 laps, 0 slowdowns, **no stall** |
+| opponent at 26 km/h, injected 12 m ahead | — | 44.31 / 48.12 / 48.23 s, 73 slowdowns, 1 emergency, **no stall** |
+
+So the unrecoverable stall is fixed and the car keeps racing. **But it still does not
+overtake.** In the close-quarters run the ego spent 75.9 s within 12 m of the
+opponent and never got closer than **9.58 m** centre-to-centre, averaging 27.4 km/h
+against 31.4 clear — it sits behind and loses ~8.7 s/lap. (The third row's opponent
+was close enough to matter; the second row's was never caught within 14 m, which is
+why it shows no loss — do not read that row as evidence of a clean pass.)
+
+Remaining work is making the pass actually happen: the guard's speed cap
+(`standstill_gap`, `brake_decel`) holds the ego ~10 m back, and at that range the
+MPC's corridor narrowing is not producing a decisive line change. Worth trying: a
+shorter following distance so the ego is close enough for the corridor to bite, and
+biasing the reference laterally when a kart sits on the line ahead.
+
+**Do not attempt** re-resetting `ub_sm`/`lb_sm` per control cycle to break the
+ratchet described in `update_path_constraints` without also resetting
+`dynamic_border_cells`: tried on 2026-07-31, and the car stalled on lap 3 of a
+*clear* track.
 
 **Also still failing:** two karts parked across the track *at the grid* with the ego
 starting from rest (`SIM_MODE=dev3`, Autoware on d1 only) — 0 laps. Same root cause.
