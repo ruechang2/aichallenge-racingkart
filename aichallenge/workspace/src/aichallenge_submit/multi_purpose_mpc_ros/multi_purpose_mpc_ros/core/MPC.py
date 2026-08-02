@@ -308,8 +308,20 @@ class MPC:
                 u = np.array(self.current_control[id:id+2])
                 max_delta = np.abs(u[1])
             else:
+                # 前回の解を使い切った: 速度 0 を出し続ける状態に入る。
+                # infeasibility_counter は解けたときにしか 0 に戻らないため、コリドーが
+                # 実行不能なままだとここから復帰できない。停止したときに理由が分かるよう
+                # コリドーの状態を出す。
                 u = np.array([0.0, 0.0])
                 max_delta = 0.0
+                if self.infeasibility_counter % 40 == 0:
+                    wp = self.model.reference_path.get_waypoint(self.model.wp_id)
+                    print(f"MPC infeasible for {self.infeasibility_counter} cycles "
+                          f"-> commanding zero. wp={self.model.wp_id} "
+                          f"corridor=[{wp.lb_sm:.2f}, {wp.ub_sm:.2f}] "
+                          f"static=[{wp.lb:.2f}, {wp.ub:.2f}] "
+                          f"e_y={self.model.spatial_state.e_y:.2f} "
+                          f"margin={self.model.safety_margin:.2f}")
 
             self.infeasibility_counter += 1
 

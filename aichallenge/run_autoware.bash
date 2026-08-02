@@ -37,6 +37,10 @@ mkdir -p "${ROS_LOG_DIR}"
 
 # set -m keeps bash from setting SIGINT to SIG_IGN on the backgrounded child (then the forwarded INT would be a no-op).
 set -m
-ros2 launch aichallenge_system_launch aichallenge_system.launch.xml "${opts[@]}" "domain_id:=$id" &
+# Extra launch arguments, so options that are not plumbed from the top level can be
+# toggled for a run without editing defaults that would then ship in the submission.
+#   LAUNCH_ARGS="use_obstacle_avoidance:=true" make ...
+read -r -a extra_opts <<< "${LAUNCH_ARGS:-}"
+ros2 launch aichallenge_system_launch aichallenge_system.launch.xml "${opts[@]}" "${extra_opts[@]}" "domain_id:=$id" &
 trap 'kill -INT $! 2>/dev/null' TERM INT
 while kill -0 $! 2>/dev/null; do wait; done
