@@ -32,6 +32,12 @@ RE_FLAG = lambda name: re.compile(r'^\[run_mpc[^\]]*\]\s+' + name + r':\s+(true|
 RE_LIST = lambda name: re.compile(r'^\[run_mpc[^\]]*\]\s+' + name + r':\s+\[([^\]]*)\]', re.M)
 RE_REFVEL = re.compile(r'^\[run_mpc[^\]]*\]\s+ref_vel:\s+([\d.]+)', re.M)
 RE_GUARD = re.compile(r'collision_guard up \(v2x=(\w+), scan=(\w+)')
+# Lateral avoidance is a launch arg, not a config value, so it only shows up as the
+# controller's own startup warning.
+RE_AVOID = re.compile(r'USE_OBSTACLE_AVOIDANCE is enabled')
+# Whether any other kart was actually present. Without this a traffic run and a clear
+# run look identical in the table, and their lap times are not comparable.
+RE_TRAFFIC = re.compile(r'traffic: kart |obstacle points in corridor')
 RE_LAP = re.compile(r'\[(\d{10}\.\d+)\] \[mpc_controller\]:[^\n]*?Lap (\d+) completed! Lap time: ([\d.]+) s')
 RE_ANY_TS = re.compile(r'\[(\d{10}\.\d+)\]')
 # Limits are also settable at runtime; the node logs every accepted change.
@@ -67,15 +73,25 @@ PARAM_FIELD = {'v_max': 'vmax', 'a_max': 'amax', 'a_min': 'amin', 'ay_max': 'ay'
                'Q[0]': 'q0', 'wp_id_offset': 'wp_off'}
 
 
-def parse_log(path):
+# A lap under this is not physically possible: the raceline is ~345 m and the kart
+# tops out at 37 km/h, so even flat out the whole way a lap takes 33.6 s. Values
+# below it are simulator artefacts (a spurious line trigger after a wall recovery,
+# for instance) and would otherwise become the headline "best lap".
+MIN_PLAUSIBLE_LAP_S = 30.0
+
+
+def parse_log(path, min_lap=MIN_PLAUSIBLE_LAP_S):
     with open(path, errors='replace') as fh:
         txt = fh.read()
 
     vmax, amax, ay = _cfg(txt, 'v_max'), _cfg(txt, 'a_max'), _cfg(txt, 'ay_max')
     amin, width = _cfg(txt, 'a_min'), _cfg(txt, 'width')
+    margin = _cfg(txt, 'safety_margin')
     q0 = _list0(txt, 'Q')
     profile = _flag(txt, 'use_speed_profile')
     wp_off = _cfg(txt, 'wp_id_offset')
+    avoid = bool(RE_AVOID.search(txt))
+    traffic = bool(RE_TRAFFIC.search(txt))
 
     refs = [float(x) for x in RE_REFVEL.findall(txt)]
     # ref_vel sections print in file order: s1,s1_1,s2,s3,s4,s5,s6,s7,s8,s9
@@ -95,6 +111,8 @@ def parse_log(path):
     slow = len(re.findall(r'slow: cap', txt))
 
     laps = sorted((int(n), float(t), float(ts)) for ts, n, t in RE_LAP.findall(txt))
+    dropped = [t for _, t, _ in laps if t < min_lap]
+    laps = [(n, t, ts) for n, t, ts in laps if t >= min_lap]
     lap_times = [round(t, 1) for _, t, _ in laps]
     last_lap_ts = laps[-1][2] if laps else None
 
@@ -120,10 +138,11 @@ def parse_log(path):
             events.append((float(tsm.group(1)), field, value))
 
     return dict(vmax=vmax, amax=amax, amin=amin, ay=ay, q0=q0, width=width,
+                margin=margin, avoid=avoid, traffic=traffic,
                 profile=profile, wp_off=wp_off, corners=corners, guard=guard,
                 emerg=emerg, slow=slow, lap_times=lap_times, laps=laps,
                 events=events, last_lap_ts=last_lap_ts, last_ts=last_ts,
-                first_ts=first_ts, has_cfg=vmax is not None)
+                first_ts=first_ts, dropped_laps=dropped, has_cfg=vmax is not None)
 
 
 def classify(rec, target):
@@ -159,7 +178,8 @@ def load_meta(logdir):
 
 
 DIFF_FIELDS = [('v_max', 'vmax'), ('ay_max', 'ay'), ('a_max', 'amax'), ('a_min', 'amin'),
-               ('Q[0]', 'q0'), ('width', 'width'), ('profile', 'profile'),
+               ('Q[0]', 'q0'), ('width', 'width'), ('safety_margin', 'margin'),
+               ('profile', 'profile'), ('avoidance', 'avoid'), ('traffic', 'traffic'),
                ('wp_id_offset', 'wp_off'), ('ref_vel', 'corners'), ('guard', 'guard')]
 
 
@@ -275,6 +295,8 @@ def collect(output_dir, target, include_all, min_laps=1, since=None):
                 'change': change,
                 'vmax': cfg['vmax'], 'amax': cfg['amax'], 'amin': cfg['amin'],
                 'ay': cfg['ay'], 'q0': cfg['q0'], 'width': cfg['width'],
+                'margin': cfg['margin'], 'avoid': cfg['avoid'],
+                'traffic': cfg['traffic'],
                 'profile': cfg['profile'], 'wp_off': cfg['wp_off'],
                 'corners': cfg['corners'] or '—', 'guard': cfg['guard'],
                 'laps': lap_times, 'completed': len(lap_times),
@@ -303,6 +325,7 @@ def build_payload(runs, target, target_s):
     if runs:
         last = runs[-1]
         cur = {k: last[k] for k in ('vmax', 'amax', 'amin', 'ay', 'q0', 'width',
+                                    'margin', 'avoid', 'traffic',
                                     'profile', 'corners', 'guard')}
     return {
         'generated': datetime.now().strftime('%Y-%m-%d %H:%M'),

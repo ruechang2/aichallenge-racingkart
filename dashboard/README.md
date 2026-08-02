@@ -28,9 +28,11 @@ Then reload `dashboard.html` (or re-publish the Artifact).
 ## What it extracts (from `autoware.log`)
 | Field | Source line |
 |-------|-------------|
-| `v_max`, `a_max`, `a_min`, `ay_max`, `width`, `wp_id_offset` | MPC config echo (`ay_max: 19.0` …) |
+| `v_max`, `a_max`, `a_min`, `ay_max`, `width`, `safety_margin`, `wp_id_offset` | MPC config echo (`ay_max: 19.0` …) |
 | `Q[0]` | first element of the `Q: [...]` config line |
 | `use_speed_profile` | `use_speed_profile: true` (shown as `fwd-bwd` vs `kappa-pred`) |
+| `avoid` | `USE_OBSTACLE_AVOIDANCE is enabled` — a launch arg, so it only appears as the controller's startup warning |
+| `traffic` | any `traffic: kart` / `obstacle points in corridor` line, i.e. whether another kart was actually on track |
 | `ref_vel` corners (s4/s6/s8) | `ref_vel:` lines (indices 4/6/8) |
 | guard state | `collision_guard up (v2x=…, scan=…)` |
 | guard events | `EMERGENCY BRAKE`, `slow: cap` counts |
@@ -58,6 +60,19 @@ standing-start lap. Note the node applies a param **2-3 laps after** the
 
 Rows are ordered by the log's own first ROS timestamp, not by directory name, so a
 hand-named `LOG_DIR` (`output/20260726-w170`) still lands in the right place.
+
+### Clear laps vs traffic laps are never mixed
+A run with another kart on track is not comparable pace, so the `traffic` flag keeps
+them apart: the "Median lap (current)" and "Under target" KPIs count **clear** laps
+on the current tune only. Treat the traffic median in the findings panel as a floor
+rather than a cost — it pools runs where the opponent was never caught with runs
+where it was.
+
+### Implausible laps are dropped
+Laps under `MIN_PLAUSIBLE_LAP_S` (30 s) are discarded as simulator artefacts. The
+raceline is ~345 m and the kart tops out at 37 km/h, so even flat out a lap takes
+33.6 s; a 20 s lap appeared once after a wall recovery and would otherwise have
+become the headline "best lap" and the largest apparent improvement.
 
 ## Collisions and manual labels — `run_meta.json`
 Collisions are **not** in `autoware.log` (they live in the AWSIM container's
