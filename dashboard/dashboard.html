@@ -136,7 +136,7 @@
       <div class="pbody"><div class="tscroll"><table>
         <thead><tr>
           <th>Run</th><th>Change vs previous</th><th>a<sub>y</sub></th><th>a_max / a_min</th><th>Q[0]</th>
-          <th>margin</th><th>profile</th><th>avoid</th><th>traffic</th><th>guard</th>
+          <th>margin</th><th>steer</th><th>profile</th><th>avoid</th><th>traffic</th><th>guard</th>
           <th style="text-align:right">best</th><th style="text-align:right">laps</th><th>hits</th><th>result</th>
         </tr></thead>
         <tbody id="exprows"></tbody>
@@ -180,7 +180,7 @@
 
 <script type="application/json" id="run-data">
 {
-  "generated": "2026-08-02 20:26",
+  "generated": "2026-08-04 08:51",
   "target_laps": 5,
   "target_s": 40.0,
   "current": {
@@ -191,8 +191,9 @@
     "q0": 200000.0,
     "width": 1.7,
     "margin": 0.85,
-    "avoid": true,
-    "traffic": true,
+    "steer": 0.6,
+    "avoid": false,
+    "traffic": false,
     "profile": true,
     "corners": "45/45/45",
     "guard": "V2X on · scan off"
@@ -209,6 +210,7 @@
       "q0": 3000000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -336,6 +338,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -371,6 +374,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -405,6 +409,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -435,6 +440,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -472,6 +478,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -503,6 +510,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -533,6 +541,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -567,6 +576,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -614,6 +624,7 @@
       "q0": 3000000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -644,6 +655,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -680,6 +692,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -711,6 +724,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -839,6 +853,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 0.35,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -865,7 +880,7 @@
     {
       "id": "R15",
       "time": "07-25 10:49",
-      "change": "a_max 3→1.8",
+      "change": "a_max 3→1.8, steer_rate_max 0.35→1.2",
       "vmax": 45.0,
       "amax": 1.8,
       "amin": -1.8,
@@ -873,6 +888,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 1.2,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -928,7 +944,7 @@
     {
       "id": "R16",
       "time": "07-25 11:20",
-      "change": "ay_max 9→12, a_max 1.8→3, a_min -1.8→-3",
+      "change": "ay_max 9→12, a_max 1.8→3, a_min -1.8→-3, steer_rate_max 1.2→2",
       "vmax": 45.0,
       "amax": 3.0,
       "amin": -3.0,
@@ -936,6 +952,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -978,6 +995,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": null,
@@ -1012,6 +1030,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1051,6 +1070,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1086,6 +1106,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1160,6 +1181,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1202,6 +1224,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1254,6 +1277,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1288,6 +1312,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1323,6 +1348,7 @@
       "q0": 600000.0,
       "width": 2.3,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1371,6 +1397,7 @@
       "q0": 600000.0,
       "width": 1.7,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1406,6 +1433,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1438,6 +1466,7 @@
       "q0": 80000.0,
       "width": 1.7,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1471,6 +1500,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1502,6 +1532,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1596,6 +1627,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": null,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1629,6 +1661,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": null,
+      "steer": 2.0,
       "avoid": true,
       "traffic": true,
       "profile": true,
@@ -1713,6 +1746,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": null,
+      "steer": 2.0,
       "avoid": true,
       "traffic": true,
       "profile": true,
@@ -1749,6 +1783,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": null,
+      "steer": 2.0,
       "avoid": true,
       "traffic": true,
       "profile": true,
@@ -1780,6 +1815,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": 0.85,
+      "steer": 2.0,
       "avoid": true,
       "traffic": false,
       "profile": true,
@@ -1810,6 +1846,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": 0.85,
+      "steer": 2.0,
       "avoid": true,
       "traffic": true,
       "profile": true,
@@ -1849,6 +1886,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": 0.85,
+      "steer": 2.0,
       "avoid": true,
       "traffic": true,
       "profile": true,
@@ -1880,6 +1918,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": 0.85,
+      "steer": 2.0,
       "avoid": false,
       "traffic": false,
       "profile": true,
@@ -1994,6 +2033,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": 0.85,
+      "steer": 2.0,
       "avoid": true,
       "traffic": false,
       "profile": true,
@@ -2509,7 +2549,7 @@
       "collisions": null,
       "guard_emergency": 0,
       "guard_slow": 0,
-      "result": "best",
+      "result": "ok",
       "note": "502 clear laps with avoidance ON, zero infeasible-zero events",
       "live": false
     },
@@ -2524,6 +2564,7 @@
       "q0": 200000.0,
       "width": 1.7,
       "margin": 0.85,
+      "steer": 2.0,
       "avoid": true,
       "traffic": true,
       "profile": true,
@@ -2546,6 +2587,73 @@
       "guard_slow": 12,
       "result": "ok",
       "note": null,
+      "live": false
+    },
+    {
+      "id": "R41",
+      "time": "08-04 new AWSIM",
+      "change": "AWSIM 2026-08-03: steer rate 0.8→0.6, cruise caps ~35.6 km/h",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "laps": [
+        39.0,
+        37.1,
+        37.4,
+        37.4,
+        37.5,
+        37.0,
+        37.3,
+        37.2,
+        37.1,
+        37.3,
+        37.3,
+        37.2,
+        37.0,
+        37.3,
+        37.2,
+        37.3,
+        37.2,
+        37.2,
+        37.4,
+        37.1,
+        37.2,
+        37.2,
+        37.3,
+        37.1,
+        37.1,
+        37.3,
+        37.4,
+        37.2,
+        37.1,
+        37.4,
+        37.1,
+        37.4,
+        37.4,
+        37.3,
+        37.4,
+        37.1,
+        37.5,
+        37.2
+      ],
+      "completed": 38,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "best",
+      "note": "38 laps, median 37.25 s, 0 collisions. Faster than the old build despite lower top speed: corner speed is no longer the constraint (min 30.4 km/h vs 23.8).",
       "live": false
     }
   ]
@@ -2574,7 +2682,7 @@
   // config matches DATA.current. That is the number the 5-lap goal lives or dies by.
   // Match the tune, but only count CLEAR laps: a run with karts on track is not
   // comparable pace, so mixing it in would quietly corrupt the headline number.
-  var cfgKeys=["ay","amax","amin","q0","width","margin","profile"];
+  var cfgKeys=["ay","amax","amin","q0","width","margin","steer","profile"];
   function sameCfg(r){ var c=DATA.current||{};
     return !r.traffic && cfgKeys.every(function(k){ return r[k]===c[k]; }); }
   var curLaps=[]; runs.filter(sameCfg).forEach(function(r){
@@ -2585,7 +2693,7 @@
     curMedian = s.length%2 ? s[(s.length-1)/2] : (s[s.length/2-1]+s[s.length/2])/2; }
 
   if(!runs.length){
-    document.getElementById("exprows").innerHTML='<tr><td colspan="14" class="empty">No runs parsed yet. Run <code>python3 dashboard/parse_runs.py</code>.</td></tr>';
+    document.getElementById("exprows").innerHTML='<tr><td colspan="15" class="empty">No runs parsed yet. Run <code>python3 dashboard/parse_runs.py</code>.</td></tr>';
   }
 
   // current config chip
@@ -2628,6 +2736,7 @@
       '<td class="num">'+n1(r.amax)+' / '+n1(r.amin)+'</td>'+
       '<td class="num">'+q0+'</td>'+
       '<td class="num">'+n1(r.margin)+'</td>'+
+      '<td class="num">'+n1(r.steer)+'</td>'+
       '<td class="cfg">'+(r.profile==null?'—':(r.profile?'fwd-bwd':'kappa-pred'))+'</td>'+
       '<td class="cfg">'+(r.avoid?'on':'off')+'</td>'+
       '<td class="cfg">'+(r.traffic?'<span style="color:var(--warn)">karts</span>':'clear')+'</td>'+
@@ -2704,7 +2813,7 @@
     }
     // running in traffic vs clear, on the current tune
     (function(){
-      var tune=["ay","amax","amin","q0","width","margin","profile"], c=DATA.current||{};
+      var tune=["ay","amax","amin","q0","width","margin","steer","profile"], c=DATA.current||{};
       function onTune(r){ return tune.every(function(k){ return r[k]===c[k]; }); }
       function medianOf(rs){ var a=[]; rs.forEach(function(r){(r.laps||[]).slice(1).forEach(function(t){a.push(t)})});
         if(!a.length) return null; a.sort(function(x,y){return x-y});

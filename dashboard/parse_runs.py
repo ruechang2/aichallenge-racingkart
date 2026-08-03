@@ -87,6 +87,9 @@ def parse_log(path, min_lap=MIN_PLAUSIBLE_LAP_S):
     vmax, amax, ay = _cfg(txt, 'v_max'), _cfg(txt, 'a_max'), _cfg(txt, 'ay_max')
     amin, width = _cfg(txt, 'a_min'), _cfg(txt, 'width')
     margin = _cfg(txt, 'safety_margin')
+    # Also separates AWSIM eras: the 2026-08-03 build dropped the vehicle's steer rate
+    # limit 0.8 -> 0.6, so runs either side of it are not comparable pace.
+    steer = _cfg(txt, 'steer_rate_max')
     q0 = _list0(txt, 'Q')
     profile = _flag(txt, 'use_speed_profile')
     wp_off = _cfg(txt, 'wp_id_offset')
@@ -138,7 +141,7 @@ def parse_log(path, min_lap=MIN_PLAUSIBLE_LAP_S):
             events.append((float(tsm.group(1)), field, value))
 
     return dict(vmax=vmax, amax=amax, amin=amin, ay=ay, q0=q0, width=width,
-                margin=margin, avoid=avoid, traffic=traffic,
+                margin=margin, steer=steer, avoid=avoid, traffic=traffic,
                 profile=profile, wp_off=wp_off, corners=corners, guard=guard,
                 emerg=emerg, slow=slow, lap_times=lap_times, laps=laps,
                 events=events, last_lap_ts=last_lap_ts, last_ts=last_ts,
@@ -179,6 +182,7 @@ def load_meta(logdir):
 
 DIFF_FIELDS = [('v_max', 'vmax'), ('ay_max', 'ay'), ('a_max', 'amax'), ('a_min', 'amin'),
                ('Q[0]', 'q0'), ('width', 'width'), ('safety_margin', 'margin'),
+               ('steer_rate_max', 'steer'),
                ('profile', 'profile'), ('avoidance', 'avoid'), ('traffic', 'traffic'),
                ('wp_id_offset', 'wp_off'), ('ref_vel', 'corners'), ('guard', 'guard')]
 
@@ -295,7 +299,7 @@ def collect(output_dir, target, include_all, min_laps=1, since=None):
                 'change': change,
                 'vmax': cfg['vmax'], 'amax': cfg['amax'], 'amin': cfg['amin'],
                 'ay': cfg['ay'], 'q0': cfg['q0'], 'width': cfg['width'],
-                'margin': cfg['margin'], 'avoid': cfg['avoid'],
+                'margin': cfg['margin'], 'steer': cfg['steer'], 'avoid': cfg['avoid'],
                 'traffic': cfg['traffic'],
                 'profile': cfg['profile'], 'wp_off': cfg['wp_off'],
                 'corners': cfg['corners'] or '—', 'guard': cfg['guard'],
@@ -325,7 +329,7 @@ def build_payload(runs, target, target_s):
     if runs:
         last = runs[-1]
         cur = {k: last[k] for k in ('vmax', 'amax', 'amin', 'ay', 'q0', 'width',
-                                    'margin', 'avoid', 'traffic',
+                                    'margin', 'steer', 'avoid', 'traffic',
                                     'profile', 'corners', 'guard')}
     return {
         'generated': datetime.now().strftime('%Y-%m-%d %H:%M'),

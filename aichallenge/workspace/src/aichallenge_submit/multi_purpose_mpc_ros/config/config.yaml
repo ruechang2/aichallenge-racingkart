@@ -57,7 +57,11 @@ mpc:
               # power-limited to ~0.4 m/s^2 at racing speed, so braking as late as possible pays)
   a_max: 3.0 # m/s^2 (MPC-side clip; accel_map is NOT in the sim loop, so this is the real accel)
   delta_max_deg: 32.0 # degrees
-  steer_rate_max: 2.0 # rad/s (matches steering_tire_rotation_rate the vehicle accepts)
+  # rad/s, the REAL vehicle limit: the MPC divides this by steering_tire_angle_gain_var
+  # itself, because its output is scaled by that gain before the vehicle rate-limits it.
+  # 2026-08-03 AWSIM lowered the vehicle's steer rate limit 0.8 -> 0.6 to match the real
+  # kart, so planning against 2.0 would mean commanding steering the car cannot execute.
+  steer_rate_max: 0.6
   control_rate: 40.0 # Hz
   steering_tire_angle_gain_var: 1.639
   # steering_tire_angle_gain_var: 1.0

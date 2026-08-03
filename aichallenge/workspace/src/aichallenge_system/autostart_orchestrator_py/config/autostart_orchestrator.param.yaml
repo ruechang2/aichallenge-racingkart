@@ -1,7 +1,12 @@
 /**:
   ros__parameters:
     vehicle_state_topic: /awsim/state
-    start_on_vehicle_state: "Grounded,Ready,Start" # start initialization/recording when either Ready or Start is observed.
+    # start initialization/recording when any of these is observed.
+    # PlayStart: the 2026-08-03 AWSIM renamed the racing state Start -> PlayStart.
+    # _state_matches compares normalized names for exact equality, so "playstart"
+    # does NOT match "start" — without this entry the orchestrator never leaves
+    # WAIT_START, never requests control mode, and the vehicle never moves.
+    start_on_vehicle_state: "Grounded,Ready,Start,PlayStart"
     stop_on_vehicle_state: "Finish"
     call_initial_pose: true
     request_control_mode: true

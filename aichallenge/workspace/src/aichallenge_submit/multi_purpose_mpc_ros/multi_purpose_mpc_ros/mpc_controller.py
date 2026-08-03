@@ -56,12 +56,20 @@ RED = ColorRGBA(r=1.0, g=0.0, b=0.0, a=1.0)
 YELLOW = ColorRGBA(r=1.0, g=1.0, b=0.0, a=1.0)
 CYAN = ColorRGBA(r=0.0, g=156.0 / 255.0, b=209.0 / 255.0, a=1.0)
 
+# Steering rate requested in every command. The vehicle enforces its own limit
+# (0.6 rad/s since the 2026-08-03 AWSIM, previously 0.8), so this is a request, not
+# a guarantee — the value that actually shapes the plan is mpc.steer_rate_max.
+STEERING_TIRE_ROTATION_RATE = 0.6
+
 def array_to_ackermann_control_command(stamp, u: np.ndarray, acc: float) -> AckermannControlCommand:
     msg = AckermannControlCommand()
     msg.stamp = stamp
     msg.lateral.stamp = stamp
     msg.lateral.steering_tire_angle = u[1]
-    msg.lateral.steering_tire_rotation_rate = 2.0
+    # The vehicle clamps this to its own limit (0.6 rad/s since the 2026-08-03 AWSIM),
+    # so asking for more is silently ignored. Kept as a named constant rather than a
+    # bare 2.0 so it is not mistaken for a tuning knob.
+    msg.lateral.steering_tire_rotation_rate = STEERING_TIRE_ROTATION_RATE
     msg.longitudinal.stamp = stamp
     msg.longitudinal.speed = u[0]
     msg.longitudinal.acceleration = acc
