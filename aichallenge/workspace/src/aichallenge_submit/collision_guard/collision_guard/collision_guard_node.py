@@ -81,6 +81,11 @@ class CollisionGuard(Node):
         # only change if we are allowed to move. Above `emergency_gap` the guard
         # therefore always leaves at least this much speed.
         self._creep_speed = float(self.declare_parameter("creep_speed", 1.0).value)
+        # Only creep while there is at least this much clearance.
+        self._creep_min_clearance = float(
+            self.declare_parameter("creep_min_clearance", 1.0).value)
+        # Clearance at which contact is imminent regardless of speed.
+        self._contact_gap = float(self.declare_parameter("contact_gap", 0.6).value)
         # Tolerance around the speed cap before the guard acts either way.
         self._speed_deadband = float(self.declare_parameter("speed_deadband", 0.2).value)
         # Acceleration allowed while still below the cap.
@@ -159,7 +164,7 @@ class CollisionGuard(Node):
         return (now_t - msg_t) <= self._sensor_stale_sec
 
     # --- core ---
-    def _forward_clearance(self, ego_x, ego_y, yaw, kappa):
+    def _forward_clearance(self, ego_x, ego_y, yaw, kappa, ego_v):
         """Return (min clear distance ahead in the corridor, emergency_flag)."""
         d_min = math.inf
         emergency = False
@@ -185,9 +190,18 @@ class CollisionGuard(Node):
                 # between, so the emergency test deliberately uses the straight
                 # heading and a footprint-width gate.
                 straight_clear = lon - self._other_vehicle_radius - self._ego_front_offset
-                if (0.0 < lon and straight_clear <= self._emergency_gap
-                        and abs(lat) <= self._emergency_half_width):
-                    emergency = True
+                if 0.0 < lon and abs(lat) <= self._emergency_half_width:
+                    # An emergency means "I cannot avoid this by braking", which
+                    # depends on how fast we are going — not on the raw gap. Judging
+                    # it by clearance alone made the car emergency-brake *while
+                    # already stopped*: on the starting grid the kart ahead sits
+                    # ~2.7 m away, which is simply what a grid looks like, and the
+                    # car would never pull away from it at all.
+                    stopping = (ego_v * ego_v) / (2.0 * self._emergency_decel) \
+                        if ego_v > 0.0 else 0.0
+                    if (straight_clear <= self._contact_gap
+                            or stopping > max(straight_clear - self._contact_gap, 0.0)):
+                        emergency = True
                     d_min = min(d_min, straight_clear)
                     continue
 
@@ -244,7 +258,8 @@ class CollisionGuard(Node):
                 kappa = msg.lateral.steering_tire_angle / self._steer_gain
             kappa = max(-self._max_curvature, min(self._max_curvature, kappa))
 
-        d_min, emergency = self._forward_clearance(ego_x, ego_y, yaw, kappa)
+        ego_v = self._odom.twist.twist.linear.x
+        d_min, emergency = self._forward_clearance(ego_x, ego_y, yaw, kappa, ego_v)
 
         if math.isinf(d_min):
             self._pub.publish(out)  # nothing ahead -> transparent
@@ -265,7 +280,10 @@ class CollisionGuard(Node):
         v_safe = math.sqrt(2.0 * self._brake_decel * eff)
         # Past the emergency gap this is a "slow down", never a "stop dead": holding
         # the car at zero would freeze the geometry and strand it there for good.
-        v_safe = max(v_safe, self._creep_speed)
+        # Creeping is what lets the car close up and get going again, but it must
+        # not nudge us into something already at arm's length.
+        if d_min > self._creep_min_clearance:
+            v_safe = max(v_safe, self._creep_speed)
 
         if msg.longitudinal.speed > v_safe:
             out.longitudinal.speed = v_safe
@@ -273,7 +291,6 @@ class CollisionGuard(Node):
             # the speed cap we just imposed. Braking whenever the cap bites would pin
             # the car at a standstill even while the cap says "creep": it would be
             # commanded backwards at -brake_decel and never reach the target at all.
-            ego_v = self._odom.twist.twist.linear.x
             if ego_v > v_safe + self._speed_deadband:
                 out.longitudinal.acceleration = -abs(self._brake_decel)
             elif ego_v < v_safe - self._speed_deadband:

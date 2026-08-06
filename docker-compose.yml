@@ -17,6 +17,9 @@ x-autoware-base: &autoware-base
     - SIM_MODE=${SIM_MODE:-}
     # NPCカート数。dev.sh が --npcs に渡す。回避機能のテスト用（本番相当は NPCS=2）。
     - NPCS=${NPCS:-}
+    # ハンディキャップ / 順位表示。本番相当の検証用（dev.sh 既定は off）。
+    - HANDICAP=${HANDICAP:-}
+    - RANKING=${RANKING:-}
     # 追加の ros2 launch 引数（例: use_obstacle_avoidance:=true）。既定値を書き換えずに
     # 実験できるようにするためのもの。
     - LAUNCH_ARGS=${LAUNCH_ARGS:-}

@@ -8,6 +8,11 @@ vehicles="${1:-1}"
 # NPCカート数: 第2引数 または NPCS 環境変数（既定 0）。
 # 本番は他チームのカート2台と混走するので、回避のテストには NPCS=2 を使う。
 npcs="${2:-${NPCS:-0}}"
+# ハンディキャップ / 順位表示: HANDICAP・RANKING 環境変数（既定 off）。
+# ハンディキャップは順位に応じて効くので、試すときは RANKING=on と併用する。
+# 1位だと終端速度が 25km/h 付近まで落ちる (2026-08-03 の AWSIM)。
+handicap="${HANDICAP:-off}"
+ranking="${RANKING:-off}"
 
 exec $AWSIM_DIRECTORY/AWSIM.x86_64 \
     --venue citycircuit \
@@ -21,9 +26,9 @@ exec $AWSIM_DIRECTORY/AWSIM.x86_64 \
     --steer-source ackermann \
     --sound off \
     --collisions on \
-    --handicap off \
+    --handicap "${handicap}" \
     --wall-recovery off \
-    --ranking off \
+    --ranking "${ranking}" \
     --camera off \
     --lidar off
 

@@ -22,8 +22,14 @@
     other_vehicle_radius: 0.9 # [m] kart footprint radius
     ego_front_offset: 0.5    # [m] base_link -> front bumper
     standstill_gap: 2.0      # [m] target gap where speed reaches 0
-    emergency_gap: 1.5       # [m] below this clearance -> full emergency stop
-    emergency_half_width: 1.0 # [m] ...but only if this close to our path centreline
+    # An emergency is "I cannot avoid this by braking", which depends on speed, not on
+    # the raw gap: judging it by clearance alone made the car emergency-brake while
+    # already stopped, so it could never pull off the starting grid, where the kart
+    # ahead legitimately sits ~2.7 m away.
+    emergency_gap: 1.5       # [m] retained for the scan branch
+    emergency_half_width: 1.0 # [m] only obstacles this close to the path centreline
+    contact_gap: 0.6         # [m] clearance at which contact is imminent whatever the speed
+    creep_min_clearance: 1.0 # [m] only creep forward while at least this clear
 
     # Curved corridor: test obstacles against the arc the ego is on, not a straight
     # box. This is what lets the MPC steer around a kart without the guard braking.
