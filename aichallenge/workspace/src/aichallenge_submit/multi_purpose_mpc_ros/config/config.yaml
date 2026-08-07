@@ -45,6 +45,15 @@ bicycle_model:
   # line of a 6 m track. That made overtaking geometrically impossible and left the
   # corridor teetering on the feasibility threshold, which is what stalled the car in
   # traffic. 0.85 = half the real 1.45 m body plus ~0.13 m clearance.
+  #
+  # CAVEAT: this one number serves two purposes that want different values — the gap
+  # to another kart, and the clearance to a wall. The MPC's lateral limit is
+  # max_width/2 - safety_margin, i.e. 3.0 - 0.85 = 2.15 m (it was 1.80 m at 1.20), and
+  # with use_obstacle_avoidance ON the car has been observed stranded on the track edge
+  # at 2.01 m and 2.31 m off the racing line — right at that limit. Fine for the
+  # shipped config, where avoidance is off and update_path_constraints never runs, but
+  # separating the wall margin from the vehicle-gap margin is the fix before avoidance
+  # can be enabled.
   safety_margin: 0.85
 
 mpc:
@@ -140,6 +149,9 @@ mpc:
   # ラインではないので、大きすぎるとコースセンター側へ引き戻されてラインを殺す。
   # 600000 -> 200000 でラップが 40.3 -> 39.6 秒になった。さらに下げる（80000）と平均は
   # ほぼ同じでばらつきだけ増える。
+  # 2026-08-08: 回避 ON で車がコース端に乗り上げる件を Q[0] 600000 で抑えられないか
+  # 試したが効果なし（2周もたずに1周で座礁、レーシングラインから 2.31 m）。原因は
+  # Q[0] ではなく bicycle_model.safety_margin 側と見られる。下の計算を参照。
   Q: [200000.0, 100000000.0, 2000000.0]
   QN: [1000000.0, 1000000.0, 10000.0]
 
