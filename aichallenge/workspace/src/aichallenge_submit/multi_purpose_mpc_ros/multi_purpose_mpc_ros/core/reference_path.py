@@ -869,11 +869,18 @@ class ReferencePath:
 
         return np.array(upper_bounds), np.array(lower_bounds)
 
-    def update_path_constraints(self, wp_id, pose, N, model_length, model_width, safety_margin):
+    def update_path_constraints(self, wp_id, pose, N, model_length, model_width,
+                                safety_margin, wall_margin=None):
         """
         Compute upper and lower bounds of the drivable area orthogonal to
         the given waypoint.
+        :param safety_margin: clearance kept from whatever bounds the free segment,
+        which may be another vehicle
+        :param wall_margin: clearance kept from the static track edge. Defaults to
+        safety_margin, which is the historical single-margin behaviour.
         """
+        if wall_margin is None:
+            wall_margin = safety_margin
 
         # min_width = model_width / np.sqrt(2)
         # min_width = model_width
@@ -919,9 +926,17 @@ class ReferencePath:
                 (ub, lb) = (wp.ub, wp.lb)
                 # print(f"Updated Upper bound: {wp.ub}, Updated Lower bound: {wp.lb}")
 
-            # Subtract safety margin
-            ub_sm = ub - safety_margin
-            lb_sm = lb + safety_margin
+            # Subtract the margins. safety_margin is the clearance to whatever bounds
+            # the free segment — which may be another kart — while wall_margin is the
+            # clearance to the static track edge. They want different values: 0.85 m
+            # is right for squeezing past a kart (a gap beside one is only ~2.5 m wide)
+            # but too little against a wall, and using the smaller number for both let
+            # the MPC drive to max_width/2 - 0.85 = 2.15 m off the line, which is past
+            # the drivable surface — the car was repeatedly left stranded on the edge
+            # at 2.0-2.3 m. wp.ub/wp.lb are the static bounds, i.e. walls only, so the
+            # wall limit can be applied separately and the tighter of the two wins.
+            ub_sm = min(ub - safety_margin, wp.ub - wall_margin)
+            lb_sm = max(lb + safety_margin, wp.lb + wall_margin)
 
             # かつてここで「保存済みの境界と新しい境界の狭い方」を採用していたが、
             # ub_sm/lb_sm は wp に書き戻されるため、コリドーが狭くなる一方で二度と
@@ -938,10 +953,10 @@ class ReferencePath:
                 # 復帰不能な停止を出力し、前方にカートがいる低速時に car が二度と
                 # 動けなくなる。ここでは静的な走行可能領域まで緩めて必ず解ける問題を
                 # 渡し、縦方向の安全は collision_guard に任せる。
-                ub_sm = wp.ub
-                lb_sm = wp.lb
+                ub_sm = wp.ub - wall_margin
+                lb_sm = wp.lb + wall_margin
                 if ub_sm < lb_sm:
-                    mid = 0.5 * (ub_sm + lb_sm)
+                    mid = 0.5 * (wp.ub + wp.lb)
                     ub_sm = lb_sm = mid
 
             # Compute absolute angle of bound cell

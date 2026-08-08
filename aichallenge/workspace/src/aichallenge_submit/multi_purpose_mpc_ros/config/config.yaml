@@ -46,15 +46,16 @@ bicycle_model:
   # corridor teetering on the feasibility threshold, which is what stalled the car in
   # traffic. 0.85 = half the real 1.45 m body plus ~0.13 m clearance.
   #
-  # CAVEAT: this one number serves two purposes that want different values — the gap
-  # to another kart, and the clearance to a wall. The MPC's lateral limit is
-  # max_width/2 - safety_margin, i.e. 3.0 - 0.85 = 2.15 m (it was 1.80 m at 1.20), and
-  # with use_obstacle_avoidance ON the car has been observed stranded on the track edge
-  # at 2.01 m and 2.31 m off the racing line — right at that limit. Fine for the
-  # shipped config, where avoidance is off and update_path_constraints never runs, but
-  # separating the wall margin from the vehicle-gap margin is the fix before avoidance
-  # can be enabled.
+  # This is the clearance to whatever bounds the free segment, which may be another
+  # kart. It is deliberately small: the gap beside a kart on the racing line is only
+  # ~2.5 m, so a large value makes overtaking geometrically impossible.
   safety_margin: 0.85
+  # Clearance to the STATIC track edge, kept separate because the two want different
+  # values. Using 0.85 for both let the MPC drive to max_width/2 - 0.85 = 2.15 m off
+  # the line, past the drivable surface, and with avoidance ON the car was repeatedly
+  # left stranded on the edge at 2.01 m and 2.31 m. 1.20 restores the old wall limit
+  # of 1.80 m without giving back the room needed to pass a kart.
+  wall_margin: 1.20
 
 mpc:
   N: 20

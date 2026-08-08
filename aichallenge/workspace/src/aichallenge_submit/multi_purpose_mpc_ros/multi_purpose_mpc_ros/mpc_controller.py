@@ -404,7 +404,8 @@ class MPCController(Node):
                 cfg_model.length,
                 cfg_model.width,
                 1.0 / self._cfg.mpc.control_rate, # type: ignore
-                getattr(cfg_model, "safety_margin", None))
+                getattr(cfg_model, "safety_margin", None),
+                getattr(cfg_model, "wall_margin", None))
 
         def create_mpc(car: BicycleModel) -> Tuple[MPCConfig, MPC]:
             cfg_mpc = self._cfg.mpc # type: ignore

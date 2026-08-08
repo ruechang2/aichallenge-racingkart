@@ -85,6 +85,18 @@ class MPC:
     def update_QN(self, QN: np.ndarray):
         self.QN = QN
 
+    def _scaled_wall_margin(self, safety_margin):
+        """Wall margin, relaxed in the same proportion as the safety margin.
+
+        get_control() retries with a progressively smaller safety margin to recover
+        from an infeasible QP; the wall clearance has to give way at the same rate or
+        the relaxation cannot actually open the corridor.
+        """
+        base = self.model.safety_margin
+        if base <= 0.0:
+            return self.model.wall_margin
+        return self.model.wall_margin * (safety_margin / base)
+
     def _init_problem(self, N, safety_margin):
         """
         Initialize optimization problem for current time step with steering rate constraints.
@@ -157,7 +169,8 @@ class MPC:
             ub, lb, _ = self.model.reference_path.update_path_constraints(
                 self.model.wp_id + 1,
                 [self.model.temporal_state.x, self.model.temporal_state.y, self.model.temporal_state.psi],
-                N, self.model.length, self.model.width, safety_margin)
+                N, self.model.length, self.model.width, safety_margin,
+                self._scaled_wall_margin(safety_margin))
         else:
             ref_wp_id = (self.model.wp_id + 1) % len(self.model.reference_path.path_constraints[0])
             ub = self.model.reference_path.path_constraints[0][ref_wp_id]
