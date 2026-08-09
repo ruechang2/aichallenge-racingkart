@@ -36,6 +36,7 @@ Then reload `dashboard.html` (or re-publish the Artifact).
 | `ref_vel` corners (s4/s6/s8) | `ref_vel:` lines (indices 4/6/8) |
 | guard state | `collision_guard up (v2x=…, scan=…)` |
 | guard events | `EMERGENCY BRAKE`, `slow: cap` counts |
+| recovery state / count | `stuck_recovery up (enabled=…)`, `STUCK detected` count |
 | lap times | `Lap N completed! Lap time: X s` (+ ROS stamp) |
 | **live param changes** | `<param> was updated to '<value>'` (+ ROS stamp) |
 | **change vs previous** | auto-diff of config against the previous row |
@@ -43,6 +44,22 @@ Then reload `dashboard.html` (or re-publish the Artifact).
 
 Commented-out preset blocks in `config.yaml` are echoed to the log too, but they
 carry a leading `#`, so only the live values are picked up.
+
+### Lap times: AWSIM's record beats the controller's log
+In a **race session** (NPCs, ranking on) the number AWSIM hands the controller for
+`Lap N completed! Lap time:` is the **cumulative** session time, not the lap — one
+6-lap race logged 110/215/275/327/377/425 s where AWSIM's own record said
+107/107/61/50/50/50 s. So if a `result-summary.json` sits next to `autoware.log`,
+the parser takes lap times from it instead. **After a race run, save it**:
+
+```bash
+docker exec aichallenge-racingkart-simulator-1 cat /aichallenge/result-summary.json \
+  > output/<ts>/d1/result-summary.json
+```
+
+For an old run where it was never saved, put the real per-lap times in
+`run_meta.json` as `"laps": [...]` and say in the `note` where they came from.
+Solo `eval.sh` runs are unaffected — there the logged value is the lap.
 
 `best` = fastest flying lap of the session (lap 1 = standing start, excluded).
 `fail` = completed < target *and* the sim kept running well past the last lap
@@ -86,7 +103,9 @@ log (`output/<ts>/d1/run_meta.json`):
 - `change` / `label` — override the auto-derived text (`change` applies to the first segment).
 - `result` — override the classifier, e.g. a run AWSIM ended on its own is not a
   control `fail`. `note` — free text carried into the JSON.
-- `exclude` — drop this run. `keep` — force-keep a short run past `--min-laps`.
+- `exclude` — drop this run. `keep` — force-keep a short run past `--min-laps`,
+  **including a 0-lap one** (otherwise dropped as a boot-only stub). Use it for a run
+  that failed to complete laps on purpose-of-record, e.g. a start that beached.
 
 ## Publishing as an Artifact (claude.ai)
 `dashboard.html` is CSP-safe (no external assets). Publish it to get a private,

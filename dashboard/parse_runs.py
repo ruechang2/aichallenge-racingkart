@@ -11,9 +11,14 @@ Usage:
     python3 dashboard/parse_runs.py --print      # also print the JSON
     python3 dashboard/parse_runs.py --target 6   # different lap target
 
+Lap times come from AWSIM's ``result-summary.json`` when one sits next to the log
+(save it after a race run — see dashboard/README.md), because in a race session the
+controller's own ``Lap N completed`` line reports cumulative time, not per-lap.
+
 Optional per-run overrides: drop a ``run_meta.json`` next to the log
 (``output/<ts>/d1/run_meta.json``) with any of:
-    {"collisions": 0, "change": "note", "label": "my run", "exclude": false}
+    {"collisions": 0, "change": "note", "label": "my run", "exclude": false,
+     "laps": [64.8, 108.4]}
 Collisions are not in autoware.log (they live in the AWSIM container's
 Player.log); capture them there and record via run_meta.json if you want them.
 """
@@ -32,6 +37,10 @@ RE_FLAG = lambda name: re.compile(r'^\[run_mpc[^\]]*\]\s+' + name + r':\s+(true|
 RE_LIST = lambda name: re.compile(r'^\[run_mpc[^\]]*\]\s+' + name + r':\s+\[([^\]]*)\]', re.M)
 RE_REFVEL = re.compile(r'^\[run_mpc[^\]]*\]\s+ref_vel:\s+([\d.]+)', re.M)
 RE_GUARD = re.compile(r'collision_guard up \(v2x=(\w+), scan=(\w+)')
+RE_RECOVERY = re.compile(r'stuck_recovery up \(enabled=(\w+)')
+# One WARN per incident, so counting them counts recoveries — the whole point of a
+# traffic run is how often the car had to dig itself out, not just whether it finished.
+RE_STUCK = re.compile(r'STUCK detected')
 # Lateral avoidance is a launch arg, not a config value, so it only shows up as the
 # controller's own startup warning.
 RE_AVOID = re.compile(r'USE_OBSTACLE_AVOIDANCE is enabled')
@@ -80,6 +89,31 @@ PARAM_FIELD = {'v_max': 'vmax', 'a_max': 'amax', 'a_min': 'amin', 'ay_max': 'ay'
 MIN_PLAUSIBLE_LAP_S = 30.0
 
 
+def awsim_lap_times(logdir):
+    """Per-lap times straight from AWSIM's ``result-summary.json``, if it is there.
+
+    The controller's own ``Lap N completed`` line is only as good as the number
+    AWSIM hands it, and in a race session (NPCs, ranking on) that number is the
+    *cumulative* session time, not the lap: a 6-lap race logged
+    110/215/275/327/377/425 s against AWSIM's own 107/107/61/50/50/50 s. Where
+    the simulator's own record exists it outranks the log.
+    """
+    path = os.path.join(logdir, 'result-summary.json')
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    # Multi-vehicle sessions list every car; ours is the one that drove.
+    for veh in data.get('vehicles') or []:
+        if veh.get('laps'):
+            return [float(t) for t in veh['laps']]
+    laps = data.get('laps')
+    return [float(t) for t in laps] if laps else None
+
+
 def parse_log(path, min_lap=MIN_PLAUSIBLE_LAP_S):
     with open(path, errors='replace') as fh:
         txt = fh.read()
@@ -113,7 +147,18 @@ def parse_log(path, min_lap=MIN_PLAUSIBLE_LAP_S):
     emerg = len(re.findall(r'EMERGENCY BRAKE', txt))
     slow = len(re.findall(r'slow: cap', txt))
 
+    rm = RE_RECOVERY.search(txt)
+    recovery = (rm.group(1).lower() == 'true') if rm else None
+    recoveries = len(RE_STUCK.findall(txt))
+
     laps = sorted((int(n), float(t), float(ts)) for ts, n, t in RE_LAP.findall(txt))
+    # AWSIM's own per-lap record wins over the controller's log where both exist.
+    authoritative = awsim_lap_times(os.path.dirname(path))
+    if authoritative:
+        stamps = [ts for _, _, ts in laps]
+        laps = [(i + 1, t, stamps[i] if i < len(stamps) else None)
+                for i, t in enumerate(authoritative)]
+        laps = [(n, t, ts) for n, t, ts in laps if ts is not None]
     dropped = [t for _, t, _ in laps if t < min_lap]
     laps = [(n, t, ts) for n, t, ts in laps if t >= min_lap]
     lap_times = [round(t, 1) for _, t, _ in laps]
@@ -143,6 +188,7 @@ def parse_log(path, min_lap=MIN_PLAUSIBLE_LAP_S):
     return dict(vmax=vmax, amax=amax, amin=amin, ay=ay, q0=q0, width=width,
                 margin=margin, steer=steer, avoid=avoid, traffic=traffic,
                 profile=profile, wp_off=wp_off, corners=corners, guard=guard,
+                recovery=recovery, recoveries=recoveries,
                 emerg=emerg, slow=slow, lap_times=lap_times, laps=laps,
                 events=events, last_lap_ts=last_lap_ts, last_ts=last_ts,
                 first_ts=first_ts, dropped_laps=dropped, has_cfg=vmax is not None)
@@ -184,7 +230,8 @@ DIFF_FIELDS = [('v_max', 'vmax'), ('ay_max', 'ay'), ('a_max', 'amax'), ('a_min',
                ('Q[0]', 'q0'), ('width', 'width'), ('safety_margin', 'margin'),
                ('steer_rate_max', 'steer'),
                ('profile', 'profile'), ('avoidance', 'avoid'), ('traffic', 'traffic'),
-               ('wp_id_offset', 'wp_off'), ('ref_vel', 'corners'), ('guard', 'guard')]
+               ('wp_id_offset', 'wp_off'), ('ref_vel', 'corners'), ('guard', 'guard'),
+               ('recovery', 'recovery')]
 
 
 def _fmt(v):
@@ -258,10 +305,23 @@ def collect(output_dir, target, include_all, min_laps=1, since=None):
         meta = load_meta(os.path.dirname(path))
         if meta.get('exclude'):
             continue
+        # Last resort for a run whose log holds cumulative times and whose
+        # result-summary.json was not kept: state the real per-lap times by hand
+        # rather than leave impossible ones (a 503 s lap in a 600 s session) in
+        # the table. Timestamps stay as logged, so segmenting still works.
+        if meta.get('laps'):
+            override = [float(t) for t in meta['laps']]
+            rec = dict(rec,
+                       lap_times=[round(t, 1) for t in override],
+                       laps=[(n, t, ts) for (n, _, ts), t in zip(rec['laps'], override)])
         n = len(rec['lap_times'])
-        if n == 0 and not include_all:
+        # keep:true overrides both length gates, including the 0-lap one: a run that
+        # never completed a lap is the most important kind of 5-lap-completion result,
+        # so an explicitly kept one must not be silently dropped as a boot-only stub.
+        keep = bool(meta.get('keep'))
+        if n == 0 and not include_all and not keep:
             continue  # boot-only / failed-to-drive run
-        if n < min_laps and not meta.get('keep'):
+        if n < min_laps and not keep:
             continue  # interrupted / too-short run (override with run_meta keep:true)
         runs.append((run_ts, rec, meta))
 
@@ -303,6 +363,7 @@ def collect(output_dir, target, include_all, min_laps=1, since=None):
                 'traffic': cfg['traffic'],
                 'profile': cfg['profile'], 'wp_off': cfg['wp_off'],
                 'corners': cfg['corners'] or '—', 'guard': cfg['guard'],
+                'recovery': cfg['recovery'], 'recoveries': rec['recoveries'],
                 'laps': lap_times, 'completed': len(lap_times),
                 'target': target,
                 'collisions': meta.get('collisions'),
@@ -330,7 +391,7 @@ def build_payload(runs, target, target_s):
         last = runs[-1]
         cur = {k: last[k] for k in ('vmax', 'amax', 'amin', 'ay', 'q0', 'width',
                                     'margin', 'steer', 'avoid', 'traffic',
-                                    'profile', 'corners', 'guard')}
+                                    'profile', 'corners', 'guard', 'recovery')}
     return {
         'generated': datetime.now().strftime('%Y-%m-%d %H:%M'),
         'target_laps': target,

@@ -84,6 +84,7 @@
   .run-id{font-family:var(--mono); color:var(--faint); font-size:11px}
   .run-name{font-weight:600}
   .cfg{font-family:var(--mono); font-size:11.5px; color:var(--muted)}
+  .rnote{font-family:var(--sans,inherit); font-size:11px; color:var(--faint); margin-top:5px; max-width:46ch; white-space:normal; line-height:1.45}
   .best-cell{font-family:var(--mono); font-variant-numeric:tabular-nums; font-weight:600; text-align:right}
 
   .chip{display:inline-flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; padding:3px 8px; border-radius:999px; border:1px solid transparent}
@@ -132,11 +133,44 @@
     <section class="kpis" id="kpis"></section>
 
     <section class="panel">
+      <div class="phead"><h2>Completing 5 laps — the grid start</h2><span class="hint">measured 2026-08-09 · not auto-derived</span></div>
+      <div class="pbody">
+        <div class="finds">
+          <div class="find loss">
+            <h3>Why it scored 0 laps: the EKF started 127° off</h3>
+            <div class="delta">yaw 0° vs 127° → wall at t+2.5 s</div>
+            <p><code>imu_gnss_poser</code> only applied the <b>raceline heading</b> inside its one-shot <code>/set_initial_pose</code> service. When AWSIM boots slowly — which is exactly what the other karts on the grid cause — <code>autostart_orchestrator</code> calls that service <i>before the first GNSS sample</i>, it fails with <code>no GNSS data received yet</code>, and the orchestrator proceeds anyway. The EKF then seeds from the GNSS/IMU orientation, which carries no usable yaw, so it starts at <b>yaw 0° while the kart points 127°</b>. The MPC sees the full heading error, ramps steering to full lock at the 0.6 rad/s rate limit, and drives off the grid into the wall 2.5 s after the start — beached at 0.004 m/s for the remaining 460 s with <code>wall-recovery off</code>. <b>No tune can fix this</b>; it is a localisation race condition, and it is the most likely reason a submission scored 0 laps.</p>
+          </div>
+          <div class="find win">
+            <h3>Fix: seed the heading from the raceline on the first GNSS sample</h3>
+            <div class="delta">wall penalty 474 s → 0 s</div>
+            <p><code>gnss_callback</code> now applies the raceline yaw to <code>initial_pose3d</code> itself (via the <code>try_apply_raceline_yaw</code> helper, which existed but was never called), so the heading no longer depends on <i>when</i> — or whether — the orchestrator's service call lands. The EKF measurement topic keeps the GNSS/IMU orientation, unchanged. Re-run of the same scenario: the service call failed again as before, <code>Publishing initial_pose3d (yaw from raceline)</code> fired 11 s later, EKF started at 127°, and the kart pulled off the grid cleanly. The fix lives in <code>aichallenge_submit/imu_gnss_poser</code>, so it ships in the submission — unlike the orchestrator, which the organizers supply themselves.</p>
+          </div>
+          <div class="find info">
+            <h3>Solo eval: 5 laps is met with room to spare</h3>
+            <div class="delta">6/6 laps · 0 penalties · 37.1–37.5 s</div>
+            <p><code>eval.sh</code> at official settings (1 kart, 6 laps, 600 s, sync start, collisions on) finishes with <code>finished=true</code>, <code>lap_count=6</code> and zero crash/wall/over penalties — 225.8 s of a 600 s session. Pace is not what threatens completion.</p>
+          </div>
+          <div class="find win">
+            <h3>A contact no longer ends the session: reverse out and rejoin</h3>
+            <div class="delta">0 laps → 6/6 finished (R55 → R58)</div>
+            <p>AWSIM's own wall recovery is <b>off in the official evaluation</b>, so one contact used to beach the kart for the rest of the session — measured, that is 460 s at 0.004 m/s. The new <code>stuck_recovery</code> package sits last in the command chain (after <code>collision_guard</code>, which would otherwise brake for the very obstacle being escaped) and takes over when the car stops <i>making progress</i> while the controller still wants to drive: shift to reverse, back out ~3 m with the steering <b>mirrored</b> — yaw rate is <code>v·tan(δ)/L</code>, so the same angle turns the car the other way at <code>v&lt;0</code> — then shift up, aim at the raceline and hand control back. It arms only after the car has driven at 2 m/s once, so it cannot fire on the grid. Re-running the exact scenario that scored 0 laps in R55: <code>finished=true</code>, <code>lap_count=6</code>, <b>position 1</b>, 9 recoveries of ~5 s each, zero collision or wall penalties.</p>
+          </div>
+          <div class="find neutral">
+            <h3>Still open: getting past a kart that is barely moving</h3>
+            <div class="delta">49.6 s/lap in traffic vs 37.1 s clear</div>
+            <p>Recovery keeps the session alive but does not overtake. AWSIM's NPC karts lap in <b>~185 s (6.7 km/h)</b> and are <b>not published on <code>/v2x/vehicle_positions</code></b>, so <code>collision_guard</code> never sees them (zero <code>EMERGENCY</code>, zero <code>slow: cap</code> across all NPC runs) and cannot even slow for them, while lateral avoidance is off. The kart therefore drives into the blocker, digs itself out, and drives into it again — all 9 recoveries in R58 fired inside the same 5 m patch. Real opponents are separate vehicles that <i>do</i> appear over V2X and run at a competitive pace, so treat this as a bound on overtaking, not on completion.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
       <div class="phead"><h2>Experiment log</h2><span class="hint">run × config × result</span></div>
       <div class="pbody"><div class="tscroll"><table>
         <thead><tr>
           <th>Run</th><th>Change vs previous</th><th>a<sub>y</sub></th><th>a_max / a_min</th><th>Q[0]</th>
-          <th>margin</th><th>steer</th><th>profile</th><th>avoid</th><th>traffic</th><th>guard</th>
+          <th>margin</th><th>steer</th><th>profile</th><th>avoid</th><th>traffic</th><th>guard</th><th>recovery</th>
           <th style="text-align:right">best</th><th style="text-align:right">laps</th><th>hits</th><th>result</th>
         </tr></thead>
         <tbody id="exprows"></tbody>
@@ -180,7 +214,7 @@
 
 <script type="application/json" id="run-data">
 {
-  "generated": "2026-08-04 08:51",
+  "generated": "2026-08-09 23:26",
   "target_laps": 5,
   "target_s": 40.0,
   "current": {
@@ -196,12 +230,13 @@
     "traffic": false,
     "profile": true,
     "corners": "45/45/45",
-    "guard": "V2X on · scan off"
+    "guard": "V2X on · scan off",
+    "recovery": true
   },
   "runs": [
     {
       "id": "R1",
-      "time": "07-19 18:13",
+      "time": "07-12 20:52",
       "change": "baseline",
       "vmax": 20.0,
       "amax": 0.7,
@@ -217,6 +252,41 @@
       "wp_off": 2.0,
       "corners": "22/22/25",
       "guard": "—",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        78.4,
+        72.1
+      ],
+      "completed": 2,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "fail",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R2",
+      "time": "07-19 18:13",
+      "change": "repeat",
+      "vmax": 20.0,
+      "amax": 0.7,
+      "amin": -1.6,
+      "ay": 6.5,
+      "q0": 3000000.0,
+      "width": 2.3,
+      "margin": null,
+      "steer": 0.35,
+      "avoid": false,
+      "traffic": false,
+      "profile": null,
+      "wp_off": 2.0,
+      "corners": "22/22/25",
+      "guard": "—",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         78.6,
         71.0,
@@ -328,7 +398,7 @@
       "live": false
     },
     {
-      "id": "R2",
+      "id": "R3",
       "time": "07-19 20:24",
       "change": "v_max 20→30, ay_max 6.5→12, Q[0] 3e+06→600000",
       "vmax": 30.0,
@@ -345,6 +415,8 @@
       "wp_off": 2.0,
       "corners": "22/22/25",
       "guard": "—",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         75.1,
         64.4,
@@ -364,7 +436,7 @@
       "live": false
     },
     {
-      "id": "R3",
+      "id": "R4",
       "time": "07-19 20:49",
       "change": "a_max 0.7→1",
       "vmax": 30.0,
@@ -381,6 +453,8 @@
       "wp_off": 2.0,
       "corners": "22/22/25",
       "guard": "—",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         81.9,
         53.1,
@@ -399,7 +473,7 @@
       "live": false
     },
     {
-      "id": "R4",
+      "id": "R5",
       "time": "07-19 21:11",
       "change": "ref_vel 22/22/25→25/24/29",
       "vmax": 30.0,
@@ -416,6 +490,8 @@
       "wp_off": 2.0,
       "corners": "25/24/29",
       "guard": "—",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         56.2,
         65.9
@@ -430,9 +506,73 @@
       "live": false
     },
     {
-      "id": "R5",
+      "id": "R6",
+      "time": "07-19 21:17",
+      "change": "v_max 30→34",
+      "vmax": 34.0,
+      "amax": 1.0,
+      "amin": -1.6,
+      "ay": 12.0,
+      "q0": 600000.0,
+      "width": 2.3,
+      "margin": null,
+      "steer": 0.35,
+      "avoid": false,
+      "traffic": false,
+      "profile": null,
+      "wp_off": 2.0,
+      "corners": "25/24/29",
+      "guard": "—",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        98.2
+      ],
+      "completed": 1,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "partial",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R7",
+      "time": "07-19 22:18",
+      "change": "guard —→V2X on · scan on",
+      "vmax": 34.0,
+      "amax": 1.0,
+      "amin": -1.6,
+      "ay": 12.0,
+      "q0": 600000.0,
+      "width": 2.3,
+      "margin": null,
+      "steer": 0.35,
+      "avoid": false,
+      "traffic": false,
+      "profile": null,
+      "wp_off": 2.0,
+      "corners": "25/24/29",
+      "guard": "V2X on · scan on",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        67.5
+      ],
+      "completed": 1,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 98,
+      "guard_slow": 2,
+      "result": "fail",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R8",
       "time": "07-20 11:10",
-      "change": "guard —→V2X on · scan off",
+      "change": "v_max 34→30, guard V2X on · scan on→V2X on · scan off",
       "vmax": 30.0,
       "amax": 1.0,
       "amin": -1.6,
@@ -447,6 +587,8 @@
       "wp_off": 2.0,
       "corners": "25/24/29",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         65.2,
         61.7,
@@ -468,7 +610,7 @@
       "live": false
     },
     {
-      "id": "R6",
+      "id": "R9",
       "time": "07-20 11:58",
       "change": "v_max 30→34",
       "vmax": 34.0,
@@ -485,6 +627,8 @@
       "wp_off": 2.0,
       "corners": "25/24/29",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         102.1,
         71.4,
@@ -500,7 +644,7 @@
       "live": false
     },
     {
-      "id": "R7",
+      "id": "R10",
       "time": "07-20 12:29",
       "change": "v_max 34→30",
       "vmax": 30.0,
@@ -517,6 +661,8 @@
       "wp_off": 2.0,
       "corners": "25/24/29",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         68.2,
         85.8
@@ -531,7 +677,7 @@
       "live": false
     },
     {
-      "id": "R8",
+      "id": "R11",
       "time": "07-20 17:26",
       "change": "repeat",
       "vmax": 30.0,
@@ -548,6 +694,8 @@
       "wp_off": 2.0,
       "corners": "25/24/29",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         56.6,
         63.5,
@@ -566,7 +714,7 @@
       "live": false
     },
     {
-      "id": "R9",
+      "id": "R12",
       "time": "07-20 17:35",
       "change": "ay_max 12→9, ref_vel 25/24/29→22/22/25",
       "vmax": 30.0,
@@ -583,6 +731,8 @@
       "wp_off": 2.0,
       "corners": "22/22/25",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         59.8,
         54.5,
@@ -614,7 +764,7 @@
       "live": false
     },
     {
-      "id": "R10",
+      "id": "R13",
       "time": "07-20 23:00",
       "change": "v_max 30→20, ay_max 9→6.5, a_max 1→0.7, Q[0] 600000→3e+06",
       "vmax": 20.0,
@@ -631,6 +781,8 @@
       "wp_off": 2.0,
       "corners": "22/22/25",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         77.9,
         71.3
@@ -645,7 +797,7 @@
       "live": false
     },
     {
-      "id": "R11",
+      "id": "R14",
       "time": "07-24 21:48",
       "change": "v_max 20→45, ay_max 6.5→13, a_max 0.7→1, a_min -1.6→-1.8, Q[0] 3e+06→600000, ref_vel 22/22/25→45/45/45",
       "vmax": 45.0,
@@ -662,6 +814,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         99.4,
         62.6,
@@ -682,7 +836,7 @@
       "live": false
     },
     {
-      "id": "R12",
+      "id": "R15",
       "time": "07-24 23:22",
       "change": "ay_max 13→10.5",
       "vmax": 45.0,
@@ -699,6 +853,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         72.9,
         64.6,
@@ -714,7 +870,7 @@
       "live": false
     },
     {
-      "id": "R13",
+      "id": "R16",
       "time": "07-24 23:27",
       "change": "ay_max 10.5→9, ref_vel 45/45/45→22/22/25",
       "vmax": 45.0,
@@ -731,6 +887,8 @@
       "wp_off": 2.0,
       "corners": "22/22/25",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         68.0,
         55.6,
@@ -843,9 +1001,41 @@
       "live": false
     },
     {
-      "id": "R14",
+      "id": "R17",
+      "time": "07-25 10:35",
+      "change": "guard V2X on · scan off→—",
+      "vmax": 45.0,
+      "amax": 1.0,
+      "amin": -1.8,
+      "ay": 9.0,
+      "q0": 600000.0,
+      "width": 2.3,
+      "margin": null,
+      "steer": 0.35,
+      "avoid": false,
+      "traffic": false,
+      "profile": null,
+      "wp_off": 2.0,
+      "corners": "22/22/25",
+      "guard": "—",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        238.8
+      ],
+      "completed": 1,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "partial",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R18",
       "time": "07-25 10:41",
-      "change": "a_max 1→3",
+      "change": "a_max 1→3, guard —→V2X on · scan off",
       "vmax": 45.0,
       "amax": 3.0,
       "amin": -1.8,
@@ -860,6 +1050,8 @@
       "wp_off": 2.0,
       "corners": "22/22/25",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         53.0,
         51.9,
@@ -878,7 +1070,7 @@
       "live": false
     },
     {
-      "id": "R15",
+      "id": "R19",
       "time": "07-25 10:49",
       "change": "a_max 3→1.8, steer_rate_max 0.35→1.2",
       "vmax": 45.0,
@@ -895,6 +1087,8 @@
       "wp_off": 2.0,
       "corners": "22/22/25",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         52.7,
         51.7,
@@ -942,7 +1136,7 @@
       "live": false
     },
     {
-      "id": "R16",
+      "id": "R20",
       "time": "07-25 11:20",
       "change": "ay_max 9→12, a_max 1.8→3, a_min -1.8→-3, steer_rate_max 1.2→2",
       "vmax": 45.0,
@@ -959,6 +1153,8 @@
       "wp_off": 2.0,
       "corners": "22/22/25",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         49.6,
         48.4,
@@ -985,7 +1181,7 @@
       "live": false
     },
     {
-      "id": "R17",
+      "id": "R21",
       "time": "07-25 11:37",
       "change": "ref_vel 22/22/25→45/45/45",
       "vmax": 45.0,
@@ -1002,6 +1198,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         47.0,
         45.8,
@@ -1020,7 +1218,7 @@
       "live": false
     },
     {
-      "id": "R18",
+      "id": "R22",
       "time": "07-26 19:42 · a",
       "change": "ay_max 12→10, profile None→on",
       "vmax": 45.0,
@@ -1037,6 +1235,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         45.6,
         44.0,
@@ -1060,7 +1260,7 @@
       "live": false
     },
     {
-      "id": "R19",
+      "id": "R23",
       "time": "07-26 19:42 · b",
       "change": "ay_max 10→13 (live)",
       "vmax": 45.0,
@@ -1077,6 +1277,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         43.5,
         42.5,
@@ -1096,7 +1298,7 @@
       "live": true
     },
     {
-      "id": "R20",
+      "id": "R24",
       "time": "07-26 19:42 · c",
       "change": "ay_max 13→16 (live)",
       "vmax": 45.0,
@@ -1113,6 +1315,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         41.9,
         41.5,
@@ -1171,7 +1375,7 @@
       "live": true
     },
     {
-      "id": "R21",
+      "id": "R25",
       "time": "07-26 19:42 · d",
       "change": "ay_max 16→19 (live)",
       "vmax": 45.0,
@@ -1188,6 +1392,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         41.0,
         40.6,
@@ -1214,7 +1420,7 @@
       "live": true
     },
     {
-      "id": "R22",
+      "id": "R26",
       "time": "07-26 19:42 · e",
       "change": "a_min -3→-4.5 (live)",
       "vmax": 45.0,
@@ -1231,6 +1437,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         40.6,
         40.1,
@@ -1267,7 +1475,7 @@
       "live": true
     },
     {
-      "id": "R23",
+      "id": "R27",
       "time": "07-26 restart · a",
       "change": "repeat",
       "vmax": 45.0,
@@ -1284,6 +1492,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.9,
         40.7,
@@ -1302,7 +1512,7 @@
       "live": false
     },
     {
-      "id": "R24",
+      "id": "R28",
       "time": "07-26 restart · b",
       "change": "wp_id_offset 2→5 (live)",
       "vmax": 45.0,
@@ -1319,6 +1529,8 @@
       "wp_off": 5.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         72.7,
         63.0,
@@ -1338,7 +1550,7 @@
       "live": true
     },
     {
-      "id": "R25",
+      "id": "R29",
       "time": "07-26 restart · c",
       "change": "wp_id_offset 5→2 (live)",
       "vmax": 45.0,
@@ -1355,6 +1567,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         63.7,
         40.7,
@@ -1387,7 +1601,7 @@
       "live": true
     },
     {
-      "id": "R26",
+      "id": "R30",
       "time": "07-26 w170 · a",
       "change": "width 2.3→1.7",
       "vmax": 45.0,
@@ -1404,6 +1618,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         43.2,
         40.0,
@@ -1423,7 +1639,7 @@
       "live": false
     },
     {
-      "id": "R27",
+      "id": "R31",
       "time": "07-26 w170 · b",
       "change": "Q[0] 600000→200000 (live)",
       "vmax": 45.0,
@@ -1440,6 +1656,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         39.7,
         39.6,
@@ -1456,7 +1674,7 @@
       "live": true
     },
     {
-      "id": "R28",
+      "id": "R32",
       "time": "07-26 w170 · c",
       "change": "Q[0] 200000→80000 (live)",
       "vmax": 45.0,
@@ -1473,6 +1691,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         39.2,
         39.7,
@@ -1490,7 +1710,7 @@
       "live": true
     },
     {
-      "id": "R29",
+      "id": "R33",
       "time": "07-26 cold",
       "change": "cold start on the sub-40 config",
       "vmax": 45.0,
@@ -1507,6 +1727,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.4,
         39.4,
@@ -1522,7 +1744,7 @@
       "live": false
     },
     {
-      "id": "R30",
+      "id": "R34",
       "time": "07-27 final",
       "change": "validation: 48 flying laps on the sub-40 config",
       "vmax": 45.0,
@@ -1539,6 +1761,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.4,
         39.3,
@@ -1617,7 +1841,7 @@
       "live": false
     },
     {
-      "id": "R31",
+      "id": "R35",
       "time": "07-27 22:05",
       "change": "repeat",
       "vmax": 45.0,
@@ -1634,6 +1858,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.0,
         39.4,
@@ -1651,9 +1877,41 @@
       "live": false
     },
     {
-      "id": "R32",
+      "id": "R36",
+      "time": "20260728-npc2",
+      "change": "avoidance off→on",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": null,
+      "steer": 2.0,
+      "avoid": true,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        43.7
+      ],
+      "completed": 1,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "fail",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R37",
       "time": "20260730-fake1",
-      "change": "avoidance off→on, traffic off→on",
+      "change": "traffic off→on",
       "vmax": 45.0,
       "amax": 3.0,
       "amin": -4.5,
@@ -1668,6 +1926,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.3,
         39.3,
@@ -1736,7 +1996,7 @@
       "live": false
     },
     {
-      "id": "R33",
+      "id": "R38",
       "time": "07-30 parked kart",
       "change": "kart parked on the racing line mid-lap (synthetic V2X)",
       "vmax": 45.0,
@@ -1753,6 +2013,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         43.1,
         40.2,
@@ -1773,7 +2035,7 @@
       "live": false
     },
     {
-      "id": "R34",
+      "id": "R39",
       "time": "07-30 slow opponent",
       "change": "opponent at 28 km/h — ego trails, then stalls",
       "vmax": 45.0,
@@ -1790,6 +2052,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.2,
         42.5,
@@ -1805,7 +2069,39 @@
       "live": false
     },
     {
-      "id": "R35",
+      "id": "R40",
+      "time": "20260730-pass2",
+      "change": "repeat",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": null,
+      "steer": 2.0,
+      "avoid": true,
+      "traffic": true,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        42.6
+      ],
+      "completed": 1,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 33,
+      "guard_slow": 78,
+      "result": "fail",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R41",
       "time": "20260731-fix",
       "change": "safety_margin None→0.85, traffic on→off",
       "vmax": 45.0,
@@ -1822,6 +2118,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.5,
         39.5
@@ -1836,7 +2134,7 @@
       "live": false
     },
     {
-      "id": "R36",
+      "id": "R42",
       "time": "07-31 margin fix",
       "change": "safety_margin 1.20 (width/sqrt2) → 0.85 — corridor no longer knife-edge",
       "vmax": 45.0,
@@ -1853,6 +2151,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.1,
         39.7,
@@ -1876,7 +2176,7 @@
       "live": false
     },
     {
-      "id": "R37",
+      "id": "R43",
       "time": "08-01 close pass",
       "change": "opponent 26 km/h 12 m ahead — no stall, but never closes inside 9.6 m",
       "vmax": 45.0,
@@ -1893,6 +2193,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         44.3,
         48.1,
@@ -1908,7 +2210,7 @@
       "live": false
     },
     {
-      "id": "R38",
+      "id": "R44",
       "time": "08-01 20:01",
       "change": "avoidance on→off, traffic on→off",
       "vmax": 45.0,
@@ -1925,6 +2227,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.2,
         39.8,
@@ -2023,7 +2327,39 @@
       "live": false
     },
     {
-      "id": "R39",
+      "id": "R45",
+      "time": "08-01 23:25",
+      "change": "repeat",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 2.0,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        57.5
+      ],
+      "completed": 1,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 28,
+      "result": "partial",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R46",
       "time": "08-02 ratchet fix",
       "change": "corridor ratchet removed — bounds recomputed every cycle",
       "vmax": 45.0,
@@ -2040,6 +2376,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         42.3,
         39.5,
@@ -2554,7 +2892,7 @@
       "live": false
     },
     {
-      "id": "R40",
+      "id": "R47",
       "time": "08-02 kart + fix",
       "change": "parked kart on the line, with the ratchet fix",
       "vmax": 45.0,
@@ -2571,6 +2909,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         43.0,
         40.3,
@@ -2590,7 +2930,7 @@
       "live": false
     },
     {
-      "id": "R41",
+      "id": "R48",
       "time": "08-04 new AWSIM",
       "change": "AWSIM 2026-08-03: steer rate 0.8→0.6, cruise caps ~35.6 km/h",
       "vmax": 45.0,
@@ -2607,6 +2947,8 @@
       "wp_off": 2.0,
       "corners": "45/45/45",
       "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
       "laps": [
         39.0,
         37.1,
@@ -2655,6 +2997,443 @@
       "result": "best",
       "note": "38 laps, median 37.25 s, 0 collisions. Faster than the old build despite lower top speed: corner speed is no longer the constraint (min 30.4 km/h vs 23.8).",
       "live": false
+    },
+    {
+      "id": "R49",
+      "time": "20260806-gridmove",
+      "change": "repeat",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        49.7,
+        52.3,
+        57.0,
+        57.0,
+        57.0,
+        57.0
+      ],
+      "completed": 6,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 288,
+      "result": "ok",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R50",
+      "time": "20260806-avoid-move",
+      "change": "avoidance off→on, traffic off→on",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": true,
+      "traffic": true,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        50.0,
+        52.7
+      ],
+      "completed": 2,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 23,
+      "result": "fail",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R51",
+      "time": "20260807-q600",
+      "change": "Q[0] 200000→600000",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 600000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": true,
+      "traffic": true,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        50.7
+      ],
+      "completed": 1,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 12,
+      "result": "fail",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R52",
+      "time": "20260807-q600b",
+      "change": "repeat",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 600000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": true,
+      "traffic": true,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        50.5
+      ],
+      "completed": 1,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 28,
+      "result": "fail",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R53",
+      "time": "20260808-tune",
+      "change": "Q[0] 600000→200000, avoidance on→off, traffic on→off",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        39.1,
+        37.1,
+        37.2,
+        37.4,
+        37.3,
+        37.3,
+        37.3,
+        37.1,
+        37.4,
+        37.3,
+        37.1,
+        37.2,
+        37.2,
+        37.4,
+        37.2,
+        37.2,
+        37.2,
+        37.2,
+        37.4,
+        37.3,
+        37.3,
+        37.3,
+        37.4,
+        37.4,
+        37.1,
+        37.3,
+        37.4,
+        37.0,
+        37.1,
+        37.5,
+        37.2,
+        37.3,
+        37.3,
+        37.1,
+        37.2,
+        37.3,
+        37.6,
+        37.3,
+        37.2,
+        37.4,
+        37.3,
+        37.3,
+        37.0,
+        37.2,
+        37.3,
+        37.4,
+        37.2,
+        37.2,
+        37.1,
+        37.3,
+        37.3,
+        37.2,
+        37.3,
+        37.3,
+        37.3,
+        37.3,
+        37.2,
+        37.5,
+        37.2
+      ],
+      "completed": 59,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "ok",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R54",
+      "time": "eval solo (official settings)",
+      "change": "eval.sh: 1 kart / 6 laps / 600 s — finished 6/6, zero penalties",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [
+        39.1,
+        37.1,
+        37.3,
+        37.5,
+        37.3
+      ],
+      "completed": 5,
+      "target": 5,
+      "collisions": 0,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "ok",
+      "note": "Baseline for 5-lap completion with nobody else on track. AWSIM result-summary.json: finished=true, lap_count=6, laps 39.05/37.12/37.32/37.48/37.31/37.48, penalties 0 (crash 0, wall 0, over 0). The MPC log only shows 5 laps because AWSIM ended the session on the 6th crossing. Initial pose was set correctly here (yaw 127 deg), which is the difference from the NPC runs.",
+      "live": false
+    },
+    {
+      "id": "R55",
+      "time": "race NPC2 (after heading fix)",
+      "change": "imu_gnss_poser seeds initial_pose3d with the raceline yaw — grid start fixed, then rear-ended a crawling NPC",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": null,
+      "recoveries": 0,
+      "laps": [],
+      "completed": 0,
+      "target": 5,
+      "collisions": 1,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "fail",
+      "note": "Same scenario that beached at the grid before the fix. Now: initial pose 'yaw from raceline' fires 11 s after the orchestrator's one-shot /set_initial_pose had already failed, EKF starts at the correct 127 deg, and the kart pulls off the grid cleanly and runs ~200 m (AWSIM wall penalties: 0, was 474 s). It then hit an NPC kart at 6.8 m/s at t=39 s and stayed jammed: AWSIM's NPC karts lap in ~185 s (6.7 km/h) and are NOT published on /v2x/vehicle_positions, so collision_guard is blind to them (0 EMERGENCY, 0 slow: cap in the whole run) and lateral avoidance is off. Passing them needs a source that sees them — this is a limit of the NPC harness, not of the grid start.",
+      "live": false
+    },
+    {
+      "id": "R56",
+      "time": "08-09 20:59",
+      "change": "recovery None→on",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": true,
+      "recoveries": 2,
+      "laps": [
+        38.8,
+        37.1,
+        37.4,
+        37.2,
+        37.4,
+        38.0,
+        37.8,
+        37.9,
+        37.9,
+        37.6,
+        38.1,
+        37.9,
+        37.9,
+        51.6,
+        38.1,
+        37.7,
+        37.8,
+        37.8,
+        38.0,
+        38.3,
+        37.8,
+        37.8,
+        37.8,
+        37.7,
+        37.9,
+        37.7,
+        38.0,
+        38.0,
+        37.8,
+        38.0,
+        37.9,
+        37.9,
+        37.9,
+        37.7,
+        37.7,
+        37.8,
+        38.1,
+        37.7,
+        37.6,
+        37.5,
+        51.9,
+        38.2,
+        37.6
+      ],
+      "completed": 43,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 39,
+      "guard_slow": 79,
+      "result": "ok",
+      "note": null,
+      "live": false
+    },
+    {
+      "id": "R57",
+      "time": "race NPC2 · recovery, first try",
+      "change": "stuck_recovery first race run: 2 NPC karts, reverse-and-rejoin enabled",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": true,
+      "recoveries": 45,
+      "laps": [
+        64.8,
+        108.4,
+        99.0,
+        116.3,
+        114.8
+      ],
+      "completed": 5,
+      "target": 5,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "ok",
+      "note": "First race-scenario run with stuck_recovery. It kept the session alive where R55 had ended jammed at 0 laps, but it needed 45 recoveries and did not meet the 6-lap requirement inside 600 s. Lap times are derived, not logged: this session's 'Lap N completed' line reported cumulative time (64.8/173.2/272.2/388.5/503.3 s -- a 503 s lap is impossible in a 600 s session), so the per-lap values above are the differences between consecutive readings. No result-summary.json was kept for this run; R58 re-ran the same scenario with it saved and finished 6 laps with only 9 recoveries.",
+      "live": false
+    },
+    {
+      "id": "R58",
+      "time": "race NPC2 · stuck_recovery on",
+      "change": "stuck_recovery: reverse, re-aim at the raceline and drive on when jammed (new package, last in the command chain)",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": true,
+      "recoveries": 9,
+      "laps": [
+        106.7,
+        107.3,
+        60.7,
+        49.7,
+        49.6,
+        49.7
+      ],
+      "completed": 6,
+      "target": 5,
+      "collisions": 0,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "ok",
+      "note": "The R55 scenario, re-run: race.sh with 2 NPC karts, handicap and ranking on. R55 rear-ended a crawling NPC and stayed jammed for the rest of the session at 0 laps. With stuck_recovery: AWSIM result-summary.json says finished=true, lap_count=6, final_position=1, i.e. the full 6-lap requirement inside the 600 s. 9 recoveries fired, every one of them in the same 5 m patch around (89646, 43170) where the NPC blocks; each took about 5 s (reverse ~3.5 s, then pull away) and handed control straight back. No AWSIM collision or wall penalty was recorded, and collision_guard raised 0 EMERGENCY. Laps 1-2 (106.7 / 107.3 s) are the jam; once past it laps 4-6 settle at 49.7 / 49.6 / 49.7 s, still well off the 37.9 s clear-track pace because the kart cannot pass a 6.7 km/h NPC. That gap is the lateral-avoidance problem, not a recovery failure. Lap times here are AWSIM's own: in this race session the controller's 'Lap N completed' line reported cumulative session time (110/215/275/327/377/425 s), so the parser now prefers result-summary.json.",
+      "live": false
     }
   ]
 }
@@ -2673,6 +3452,9 @@
   function flyBest(r){ var f=(r.laps||[]).slice(1); if(!f.length) f=r.laps||[]; return f.length?Math.min.apply(null,f):null; }
 
   var withLaps = runs.filter(function(r){return (r.laps||[]).length});
+  // run_meta notes are hand-written free text, so they go in as text, not markup.
+  function esc(s){ return String(s).replace(/[&<>]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
   var bests = withLaps.map(flyBest).filter(function(x){return x!=null});
   var SESSION_BEST = bests.length?Math.min.apply(null,bests):null;
   var maxLaps = runs.length?Math.max.apply(null,runs.map(function(r){return r.completed||0})):0;
@@ -2704,7 +3486,8 @@
      '<span class="k">profile</span> '+(cur.profile?'fwd-bwd':'kappa-pred')+
      ' &nbsp;·&nbsp; <span class="k">width</span> '+cur.width+
      ' &nbsp;·&nbsp; <span class="k">avoidance</span> off by default'+
-     ' &nbsp;·&nbsp; <span class="k">guard</span> '+(cur.guard||'—')) : '';
+     ' &nbsp;·&nbsp; <span class="k">guard</span> '+(cur.guard||'—')+
+     ' &nbsp;·&nbsp; <span class="k">recovery</span> '+(cur.recovery==null?'—':(cur.recovery?'on':'off'))) : '';
 
   // KPIs
   var kpis=[
@@ -2731,7 +3514,7 @@
     var q0 = r.q0==null?'—':(r.q0>=1000?(r.q0/1000)+'k':r.q0);
     return '<tr>'+
       '<td><span class="run-id">'+r.id+(r.time?' · '+r.time:'')+'</span></td>'+
-      '<td class="cfg">'+(r.change||'—')+'</td>'+
+      '<td class="cfg">'+(r.change||'—')+(r.note?'<div class="rnote">'+esc(r.note)+'</div>':'')+'</td>'+
       '<td class="num">'+n1(r.ay)+'</td>'+
       '<td class="num">'+n1(r.amax)+' / '+n1(r.amin)+'</td>'+
       '<td class="num">'+q0+'</td>'+
@@ -2741,6 +3524,11 @@
       '<td class="cfg">'+(r.avoid?'on':'off')+'</td>'+
       '<td class="cfg">'+(r.traffic?'<span style="color:var(--warn)">karts</span>':'clear')+'</td>'+
       '<td class="cfg">'+(r.guard||'—')+'</td>'+
+      // How often it actually had to dig itself out matters as much as whether it
+      // was enabled: 9 recoveries and 45 recoveries are very different races.
+      '<td class="cfg">'+(r.recovery==null?'—':(r.recovery
+          ? 'on'+(r.recoveries?' · <span style="color:var(--warn)">'+r.recoveries+'×</span>':'')
+          : 'off'))+'</td>'+
       '<td class="best-cell">'+(b!=null?b.toFixed(1):'—')+'</td>'+
       '<td class="num">'+(r.completed||0)+' / '+(r.target||TGT_LAPS)+'</td>'+
       '<td class="num">'+(r.collisions==null?'—':r.collisions)+'</td>'+
