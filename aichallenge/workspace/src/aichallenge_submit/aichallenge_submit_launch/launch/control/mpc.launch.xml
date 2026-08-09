@@ -21,6 +21,22 @@
   <arg name="use_collision_guard" default="true"/>
   <!-- Wall(scan) AEB defaults OFF: current /scan source false-triggers. See collision_guard README. -->
   <arg name="use_scan_wall" default="false"/>
+  <!-- Automatic recovery after hitting a wall or another kart. AWSIM's own
+       wall recovery is off in the official evaluation, so without this a single
+       contact ends the session beached at 0 m/s. See stuck_recovery/README.md. -->
+  <arg name="use_stuck_recovery" default="true"/>
+
+  <!-- Command chain, built from whichever filters are enabled:
+         MPC  ->  collision_guard  ->  stuck_recovery  ->  vehicle
+       Each disabled stage simply drops out and the topics shorten. The recovery
+       is deliberately LAST: while it backs the car out of a wall, the guard
+       would otherwise brake for the very obstacle being escaped. -->
+  <let name="mpc_out_topic"
+       value="$(eval &quot;'/control/command/control_cmd_mpc' if '$(var use_collision_guard)' == 'true' or '$(var use_stuck_recovery)' == 'true' else '/control/command/control_cmd'&quot;)"/>
+  <let name="guard_out_topic"
+       value="$(eval &quot;'/control/command/control_cmd_guarded' if '$(var use_stuck_recovery)' == 'true' else '/control/command/control_cmd'&quot;)"/>
+  <let name="recovery_in_topic"
+       value="$(eval &quot;'$(var guard_out_topic)' if '$(var use_collision_guard)' == 'true' else '$(var mpc_out_topic)'&quot;)"/>
 
   <!-- Boost mode: the guard is bypassed. It is a Python node and cannot republish at
        1700 Hz, so putting it in the path would both throttle the boost and lag the
@@ -43,38 +59,38 @@
   </group>
 
   <group unless="$(var use_boost_acceleration)">
-    <!-- With guard: MPC command is routed through the guard before the vehicle. -->
-    <group if="$(var use_collision_guard)">
-      <node pkg="multi_purpose_mpc_ros" exec="run_mpc_controller.bash"
-            name="mpc_controller" output="screen"
-            args="--config_path $(find-pkg-share multi_purpose_mpc_ros)/config/$(var config_file)
-                  --ref_vel_path $(find-pkg-share multi_purpose_mpc_ros)/config/$(var ref_vel_file)">
-        <param name="use_sim_time" value="$(var use_sim_time)"/>
-        <param name="use_boost_acceleration" value="false"/>
-        <param name="use_obstacle_avoidance" value="$(var use_obstacle_avoidance)"/>
-        <param name="use_stats" value="false"/>
-        <remap from="/control/command/control_cmd" to="/control/command/control_cmd_mpc"/>
-      </node>
+    <!-- The MPC publishes to whatever comes next in the chain; with every filter
+         disabled that is the vehicle topic itself (original behavior). -->
+    <node pkg="multi_purpose_mpc_ros" exec="run_mpc_controller.bash"
+          name="mpc_controller" output="screen"
+          args="--config_path $(find-pkg-share multi_purpose_mpc_ros)/config/$(var config_file)
+                --ref_vel_path $(find-pkg-share multi_purpose_mpc_ros)/config/$(var ref_vel_file)">
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+      <param name="use_boost_acceleration" value="false"/>
+      <param name="use_obstacle_avoidance" value="$(var use_obstacle_avoidance)"/>
+      <param name="use_stats" value="false"/>
+      <remap from="/control/command/control_cmd" to="$(var mpc_out_topic)"/>
+    </node>
 
+    <group if="$(var use_collision_guard)">
       <include file="$(find-pkg-share collision_guard)/launch/collision_guard.launch.xml">
         <arg name="use_sim_time" value="$(var use_sim_time)"/>
-        <arg name="input_cmd_topic" value="/control/command/control_cmd_mpc"/>
-        <arg name="output_cmd_topic" value="/control/command/control_cmd"/>
+        <arg name="input_cmd_topic" value="$(var mpc_out_topic)"/>
+        <arg name="output_cmd_topic" value="$(var guard_out_topic)"/>
         <arg name="use_scan_wall" value="$(var use_scan_wall)"/>
       </include>
     </group>
 
-    <!-- Without guard: MPC publishes the vehicle command directly (original behavior). -->
-    <group unless="$(var use_collision_guard)">
-      <node pkg="multi_purpose_mpc_ros" exec="run_mpc_controller.bash"
-            name="mpc_controller" output="screen"
-            args="--config_path $(find-pkg-share multi_purpose_mpc_ros)/config/$(var config_file)
-                  --ref_vel_path $(find-pkg-share multi_purpose_mpc_ros)/config/$(var ref_vel_file)">
-        <param name="use_sim_time" value="$(var use_sim_time)"/>
-        <param name="use_boost_acceleration" value="false"/>
-        <param name="use_obstacle_avoidance" value="$(var use_obstacle_avoidance)"/>
-        <param name="use_stats" value="false"/>
-      </node>
+    <group if="$(var use_stuck_recovery)">
+      <include file="$(find-pkg-share stuck_recovery)/launch/stuck_recovery.launch.xml">
+        <arg name="use_sim_time" value="$(var use_sim_time)"/>
+        <arg name="input_cmd_topic" value="$(var recovery_in_topic)"/>
+        <!-- Intent is read upstream of the guard: a guard holding the car at
+             0 m/s against the obstacle must not read as "the controller wants
+             to stop", which is precisely the case being recovered from. -->
+        <arg name="planned_cmd_topic" value="$(var mpc_out_topic)"/>
+        <arg name="output_cmd_topic" value="/control/command/control_cmd"/>
+      </include>
     </group>
   </group>
 </launch>

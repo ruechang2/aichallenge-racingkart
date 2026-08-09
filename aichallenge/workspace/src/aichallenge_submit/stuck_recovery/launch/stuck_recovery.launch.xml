@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="param_file" default="$(find-pkg-share stuck_recovery)/config/stuck_recovery.param.yaml"/>
+
+  <!-- Topic wiring: input_cmd_topic is the command actually on its way to the
+       vehicle (downstream of collision_guard); planned_cmd_topic is the
+       controller's own command, used only to read whether it still wants to
+       move. When there is no guard in the chain the two are the same topic. -->
+  <arg name="input_cmd_topic" default="/control/command/control_cmd_guarded"/>
+  <arg name="planned_cmd_topic" default="/control/command/control_cmd_mpc"/>
+  <arg name="output_cmd_topic" default="/control/command/control_cmd"/>
+
+  <node pkg="stuck_recovery" exec="stuck_recovery_node" name="stuck_recovery" output="screen">
+    <param from="$(var param_file)"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+    <remap from="~/input/control_cmd" to="$(var input_cmd_topic)"/>
+    <remap from="~/input/planned_cmd" to="$(var planned_cmd_topic)"/>
+    <remap from="~/output/control_cmd" to="$(var output_cmd_topic)"/>
+  </node>
+</launch>

@@ -1,0 +1,122 @@
+# stuck_recovery
+
+壁や他カートに接触して動けなくなった車両を、**後退 → 進行方向をレースラインへ向け直す → 再発進**
+で自動復帰させるノード。
+
+AWSIM 自身にも `--wall-recovery` があるが、**公式評価 (`eval.sh`) では off**。
+つまり本番では一度スタックしたらセッション終了までそのまま、というのが既定の挙動である
+（実測: グリッドで壁に刺さり、残り 460 秒を 0.004 m/s で座礁 = 0 周）。
+このノードはその穴を提出パッケージ側で塞ぐためにある。
+
+## コマンドチェーン
+
+```
+MPC --/control/command/control_cmd_mpc--> collision_guard --/control/command/control_cmd_guarded-->
+     stuck_recovery --/control/command/control_cmd--> vehicle
+                    --/control/command/gear_cmd------> vehicle
+```
+
+**guard より後ろ**に置くのは意図的。復帰中は「今まさに離れようとしている障害物」に対して
+guard がブレーキをかけてしまうため、最終段でなければ後退そのものを潰される。
+`use_collision_guard` / `use_stuck_recovery` のどちらを false にしてもチェーンは自然に短くなる
+（`mpc.launch.xml` の `<let>` がトピック名を組み替える）。
+
+無効化するには `use_stuck_recovery:=false`。
+
+## 復帰の判定
+
+「速度 0」ではなく **「進んでいない」** で判定する。壁に押し付けられたカートは 0.1 m/s で
+擦りながら動き続けるし、駆動輪が空転していれば「動いてはいるが進んでいない」からである。
+
+| 条件 | 既定値 | 理由 |
+|---|---|---|
+| `stuck_radius` 以内に留まる | 1.0 m | 最も遅いコーナーでも 8 m/s なので誤検知しない |
+| その状態が `stuck_duration` 継続 | 2.5 s | |
+| コントローラが走ろうとしている | `intent_speed` 0.5 m/s | 意図的な停止を誤検知しない |
+| 一度でも `arm_speed` に達している | 2.0 m/s | **グリッド保護** |
+
+意図の判定は **guard の上流** (`control_cmd_mpc`) を見る。障害物の手前で guard が 0 m/s に
+抑えている状態は「コントローラが止まりたい」ではなく、まさに復帰対象だからである。
+
+### グリッドでは絶対に作動しない
+
+スタート前のグリッドでは、MPC が速度指令を出したまま車両が数秒静止するのが正常であり、
+そこで後退したら自滅する。そのため **一度 2 m/s 以上で走るまで武装しない**。
+`test_standing_on_the_grid_never_triggers` がこれを固定している。
+
+## 復帰動作
+
+`shift_reverse → reverse → shift_drive → forward → cooldown`
+
+- **ギア**: `/control/command/gear_cmd` に REVERSE(20)/DRIVE(2)。シフトが効く前に加速指令を
+  出すと壁に向かって加速してしまうので、ギアレポート (`/vehicle/status/gear_status`) が
+  一致するか `shift_timeout` 経過するまで動力を入れない。
+- **操舵の符号がこの機能の肝**。ヨーレートは `v·tan(δ)/L` なので、後退中 (`v < 0`) は同じ舵角が
+  逆向きに車体を回す。前進で線に戻る舵をそのまま使うと**逆効果**になるため、後退中は
+  符号を反転する (`mirrored_for_reverse`)。`test_mirrored_steer_rotates_the_nose_towards_the_path_while_reversing`
+  と、その対照実験 `test_using_the_unmirrored_steer_in_reverse_would_make_it_worse` が両方を押さえている。
+- **後方確認**: V2X で真後ろ `rear_clear_distance` 以内にカートがいるときは後退を飛ばし、
+  前進側だけ実行する。スタックを接触ペナルティに置き換えないため。
+- **打ち切り**: 連続 `max_attempts`(3) 回で `give_up_cooldown`(10 s) 待機に入り、コントローラに
+  任せる。動かない障害物相手に前後動を繰り返しても意味がないため。`attempt_reset_distance`
+  (15 m) 走れたら回数はリセットされる。
+
+MPC 側のリセットは不要。`BicycleModel.update_states()` が毎周期グローバル最近傍で
+ウェイポイントを取り直すので、後退しても参照経路は自動的に追従する。
+
+## 実測 (2026-08-09, AWSIM 2026-08-03 ビルド)
+
+意図的に壁へ突っ込ませて計測した 1 回の復帰:
+
+| 項目 | 実測 |
+|---|---|
+| ギアレポートが REVERSE になるまで | 0.13 s |
+| 後退速度の頭打ち | **1.38 m/s**（指令に関わらず AWSIM 側の上限） |
+| そこまでの立ち上がり | 約 1.9 s（実効 ~0.7 m/s²） |
+| 後退距離 / 時間 | 3.59 m / 3.55 s |
+| 復帰全体 | 約 5.1 s |
+| 結果 | 通常走行に復帰。当該ラップ 51.6 s（通常 37.9 s） |
+
+同セッションは 43 周走り、復帰が起きた 2 周（51.6 / 51.9 s）以外はすべて 37.1〜38.3 s に
+収まっている（dashboard R56）。**復帰は通常走行のペースに影響していない**し、残り 41 周で
+一度も誤発火していない。
+
+この頭打ちのせいで `reverse_distance` の初期値 4.0 m はタイムアウトに間に合わなかったため
+**3.0 m** にしてある。`reverse_accel_sign: 1.0`（REVERSE ギアでは**正**の加速度が後退）も
+この計測で確定した値であり、推測ではない。
+
+### 混走 (`race.sh`, NPC 2 台) — dashboard R58
+
+NPC カートは約 185 秒/周 (6.7 km/h) で走り、`/v2x/vehicle_positions` に出ないため
+collision_guard からは見えない。従来はここで追突して jam し **0 周**で終わっていた
+（dashboard の R55）。復帰ありで同じシナリオを再実行した結果（AWSIM `result-summary.json`）:
+
+| 項目 | 実測 |
+|---|---|
+| `finished` / `lap_count` / 順位 | **true / 6 / 1位**（6周要件を 600 秒以内に充足） |
+| ラップ | 106.7 / 107.3 / 60.7 / 49.7 / 49.6 / 49.7 秒 |
+| 復帰回数 | **9 回**、すべて (89646, 43170) 付近の同じ 5 m 四方 |
+| 衝突・壁ペナルティ | 0（collision_guard の EMERGENCY も 0） |
+
+1〜2 周目が詰まりで、抜けた後は 49.6 秒前後に落ち着く。単独走行の 37.9 秒には遠いが、
+これは 6.7 km/h の NPC を追い抜けないためで、完走可否とは別の問題（横方向回避の課題）。
+
+**注意: レースセッションでは MPC の `Lap N completed! Lap time:` が累積時間を報告する**
+（本走行では 110/215/275/327/377/425 秒 = AWSIM の 107/107/61/50/50/50 秒の累積）。
+周回タイムは AWSIM の `result-summary.json` を正本とすること。`dashboard/parse_runs.py`
+はログ隣に `result-summary.json` があればそちらを優先するようにしてある。
+
+初回の混走 (R57) は 45 回の復帰を要して 6 周に届かなかった。同じ構成での R58 が 9 回で
+完走しているので、この差は復帰ロジックではなく NPC との遭遇の巡り合わせによる。
+
+## テスト
+
+ROS 非依存の純ロジック (`recovery_logic.py`) なので素の環境で実行できる:
+
+```bash
+cd aichallenge/workspace/src/aichallenge_submit/stuck_recovery
+python3 -m pytest test/ -q
+```
+
+- `test_stuck_detector.py` — 誤検知の 2 つの防波堤（武装、意図）と相の順序
+- `test_recovery_steering.py` — 経路投影と、後退時の舵角反転（自転車モデルを積分して検証）

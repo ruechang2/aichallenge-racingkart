@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>stuck_recovery</name>
+  <version>0.1.0</version>
+  <description>
+    Automatic recovery from a stuck vehicle. Sits at the end of the command
+    chain and takes over when the car stops making progress while the controller
+    is still asking it to drive: it reverses away with the steering mirrored so
+    the nose swings back towards the racing line, then pulls away and hands
+    control back. Without it, one wall or kart contact ends the session.
+  </description>
+  <maintainer email="i.kota2015@gmail.com">aichallenge</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>autoware_auto_control_msgs</depend>
+  <depend>autoware_auto_planning_msgs</depend>
+  <depend>autoware_auto_vehicle_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>v2x_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

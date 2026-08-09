@@ -1,0 +1,69 @@
+/**:
+  ros__parameters:
+    enable_recovery: true
+
+    # --- when to take over ---
+    # Nothing fires before the car has driven once. On the grid it legitimately
+    # stands still for seconds while the controller already commands a speed, and
+    # backing off the grid before the start would be a self-inflicted 0 laps.
+    arm_speed: 2.0           # [m/s] speed that must be reached once to arm the recovery
+    # The test is "no progress", not "zero speed": a kart wedged against a wall
+    # still creeps along it, and one with its wheels spinning is moving without
+    # going anywhere. 1.0 m in 2.5 s is far below any racing pace (the slowest
+    # measured corner is ~8 m/s) yet well above localisation jitter.
+    stuck_radius: 1.0        # [m] displacement that counts as progress
+    stuck_duration: 2.5      # [s] time inside that radius before it counts as stuck
+    intent_speed: 0.5        # [m/s] controller speed command above which it "wants to move"
+
+    # --- the manoeuvre ---
+    # Timings come from a measured recovery on the 2026-08-03 AWSIM (kart driven
+    # into the wall on purpose): the gear report flips within 0.13 s, reverse
+    # speed saturates at 1.38 m/s after a ~1.9 s ramp, so backing out covers about
+    # 1 m/s once rolling. 4 m did not fit inside a 3.5 s timeout; 3 m does.
+    shift_timeout: 0.5       # [s] wait for the gear report before commanding motion
+    reverse_distance: 3.0    # [m] how far to back away from the stuck point
+    reverse_timeout: 4.0     # [s] give up backing out after this long
+    reverse_speed: 2.0       # [m/s] commanded while reversing (AWSIM caps it at ~1.4)
+    reverse_accel: 3.0       # [m/s^2] commanded while reversing (a_max; achieved ~0.7)
+    # AWSIM applies `acceleration` along the direction of the selected gear, so
+    # backing up is a POSITIVE acceleration in reverse gear (measured: gear 20 and
+    # +3.0 gives -1.38 m/s). This is a property of the vehicle interface, not of
+    # the logic: flip to -1.0 for an interface that expects a signed,
+    # gear-independent acceleration.
+    reverse_accel_sign: 1.0
+    forward_duration: 2.0    # [s] drive out under recovery control at most this long
+    forward_speed: 4.0       # [m/s] commanded while pulling away
+    forward_accel: 3.0       # [m/s^2] commanded while pulling away
+    # Hand back to the controller as soon as the car is genuinely rolling; the MPC
+    # re-projects onto the nearest waypoint every cycle, so it needs no reset and
+    # drives the line better than this node ever will.
+    forward_release_speed: 2.0  # [m/s]
+    cooldown: 3.0            # [s] no re-detection for this long after handing back
+
+    # --- giving up ---
+    # Repeated attempts against the same obstacle are a sign the manoeuvre is not
+    # the answer (e.g. a kart parked on the line). Back off and let the controller
+    # try for a while rather than shuttling back and forth forever.
+    max_attempts: 3
+    give_up_cooldown: 10.0   # [s] cooldown after the attempt limit is hit
+    attempt_reset_distance: 15.0  # [m] driving this far clears the attempt count
+
+    # --- steering back onto the line ---
+    # Pure-pursuit-ish: the lookahead point carries most of the correction, the
+    # heading term keeps it sane when the car sits on the line but points at a wall.
+    steer_k_lat: 0.12
+    steer_k_psi: 0.8
+    lookahead: 6.0           # [m] along the reference path from the closest point
+    # delta_max (32 deg) x steering_tire_angle_gain (1.639) — the same full-lock
+    # command the MPC itself is allowed to emit.
+    max_steer: 0.9
+
+    # --- rear check ---
+    # Backing into a kart behind us would trade being stuck for a collision
+    # penalty, so when the way back is blocked only the forward half runs.
+    use_v2x_rear_check: true
+    rear_clear_distance: 4.0 # [m] how far behind to look
+    rear_half_width: 1.2     # [m] half-width of the rear corridor
+    self_ignore_radius: 1.5  # [m] ignore V2X points within this of ego (that's us)
+    sensor_stale_sec: 0.5    # [s] drop sensor data older than this
+    gear_publish_period: 0.1 # [s] how often to repeat the gear command while shifting

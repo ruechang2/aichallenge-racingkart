@@ -20,10 +20,23 @@
        see collision_guard/README.md). That is exactly the race start, with two karts
        alongside on the grid, so shipping this enabled means not completing a lap.
        It is validated only for avoiding a kart encountered mid-lap, at speed.
-       Turn it on with use_obstacle_avoidance:=true once the standing-start case is
-       fixed. -->
+       DECIDED 2026-08-08 to leave this off rather than keep chasing it. Every fix so
+       far has moved the failure rather than removed it: the corridor collapsed to zero
+       width (safety_margin), then it beached on the track edge (wall clearance), then
+       the QP went infeasible with the car outside its own corridor and never
+       recovered. Off, the same scenarios simply keep lapping. The remaining known fix
+       is to guarantee the corridor always contains the current e_y so the problem
+       stays solvable; until someone does that and re-validates, leave this alone.
+       It is still available as use_obstacle_avoidance:=true for that work. -->
   <arg name="use_obstacle_avoidance" default="false" description="steer around other karts (V2X)"/>
   <arg name="use_collision_guard" default="true" description="longitudinal AEB / speed cap"/>
+  <!-- Automatic recovery from a stuck vehicle: back out of the wall (or the kart
+       we rear-ended), turn the nose back onto the racing line, and drive on.
+       AWSIM's own wall recovery is OFF in the official evaluation, so without
+       this a single contact beaches the car for the rest of the session, which
+       is exactly how a submission scores 0 laps. Armed only after the car has
+       driven once, so it cannot fire on the grid. See stuck_recovery/README.md. -->
+  <arg name="use_stuck_recovery" default="true" description="reverse out and rejoin when stuck"/>
   <arg name="track_subdir" default="$(eval &quot;'' if '$(var track)' == 'citycircuit' else '$(var track)/'&quot;)"/>
   <!-- Map -->
   <arg name="lanelet2_map_file" default="$(var track_subdir)lanelet2_map.osm" description="lanelet2 map file name"/>
@@ -163,6 +176,7 @@
       <arg name="track" value="$(var track)"/>
       <arg name="use_obstacle_avoidance" value="$(var use_obstacle_avoidance)"/>
       <arg name="use_collision_guard" value="$(var use_collision_guard)"/>
+      <arg name="use_stuck_recovery" value="$(var use_stuck_recovery)"/>
     </include>
   </group>
 
