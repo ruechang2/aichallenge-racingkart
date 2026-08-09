@@ -28,7 +28,8 @@ make eval → run_evaluation.bash → evaluation.launch.xml
 
 | スクリプト | 用途 | 引数 | 主な設定 |
 |---|---|---|---|
-| `eval.sh` | 評価 | - | 1台 / 6 laps / 600s / count開始 / handicap・wall-recovery・ranking off |
+| `eval.sh` | 評価（公式設定そのまま） | - | 1台 / NPC 0 / 6 laps / 600s / sync開始 / handicap・wall-recovery・ranking off |
+| `race.sh` | 本番相当の完走確認 | NPC数（既定 2） | 6 laps / 600s / count開始 / NPCカート2台 / handicap・ranking on |
 | `dev.sh` | 開発 | 車両数 N（既定 1） | unlimited laps・timeout / count開始 / handicap・wall-recovery・ranking off |
 | `parallel.sh` | 複数台レース | - | 3台 / 6 laps / 600s / sync開始 / handicap・ranking・start-random off / wall-recovery off |
 | `gate.sh` | Safety Gate テスト | テスト番号 1/2/3/all（既定 all） | 1台。all は test1〜3 を順次実行 |
@@ -40,7 +41,12 @@ make eval → run_evaluation.bash → evaluation.launch.xml
 
 - start-mode: `dev.sh` は count（全車接地後にカウントダウン開始、`/admin/awsim/start` 不要）。
   `eval.sh` / `parallel.sh` は sync（`/admin/awsim/start` 待ち。評価では awsim_state_manager が
-  自動送信、手動で送るなら `make awsim-request-start`）。
+  自動送信、手動で送るなら `make awsim-request-start`）。`race.sh` は NPC を使うので count
+  （sync + NPC は AWSIM が Start 直後に 0周で Terminate する。race.sh 内のコメント参照）。
+- `eval.sh` と `race.sh` の使い分け: タイムは `eval.sh`（単独走行なので比較可能）、
+  **5周完走できるかは `race.sh`**（混走グリッドは実際に0周で終わった原因）。
+  評価バンドルごと動かすなら `SIM_MODE=race CMD='/aichallenge/run_evaluation.bash'
+  docker compose run --rm -d autoware-command`（結果は `output/<ts>/d1/result-summary.json`）。
 - センサー（camera/LiDAR）は off が既定。GPU 描画への切り替えは各ファイル末尾のコメント参照。
 - 引数の完全な仕様は AWSIM リポジトリの `docs/AIChallenge/specs/CLI.md` を参照。
 
