@@ -141,12 +141,23 @@ def awsim_summary(logdir):
     if not data:
         return {}
     required = (data.get('session') or {}).get('required_laps')
-    for veh in data.get('vehicles') or []:
-        if veh.get('laps'):
-            return {'final_position': veh.get('final_position'),
-                    'finished': veh.get('finished'),
-                    'required_laps': required}
-    return {'required_laps': required}
+    vehicles = data.get('vehicles') or []
+    ours = next((v for v in vehicles if v.get('laps')), None)
+    if ours is None:
+        # Nobody completed a lap, so "the one that drove" cannot pick us out. Fall
+        # back to the vehicle number matching this log's domain (d1 -> 1), which is
+        # how the run directories are named, then to the first entry.
+        try:
+            want = int(os.path.basename(logdir).lstrip('d'))
+        except ValueError:
+            want = None
+        ours = next((v for v in vehicles if v.get('vehicle_number') == want), None) \
+            or (vehicles[0] if vehicles else None)
+    if ours is None:
+        return {'required_laps': required}
+    return {'final_position': ours.get('final_position'),
+            'finished': ours.get('finished'),
+            'required_laps': required}
 
 
 def awsim_lap_times(logdir):

@@ -135,6 +135,29 @@ def test_penalties_recoveries_and_position_land_on_the_right_rows():
     assert by_lap[1]['limit_rank'] is None, "no limit event on lap 1"
 
 
+def test_a_run_that_completed_nothing_still_gets_its_unfinished_lap():
+    """0 laps is a result, not an absence of one — it must still have a row."""
+    rows = lap_detail.build(lap_times=[], penalty_events=[], recovery_stamps=[],
+                            guard_slow_stamps=[], lap_stamps=[])
+    assert [r['lap'] for r in rows] == [1]
+    assert rows[0]['time'] is None
+
+
+def test_events_on_a_0_lap_run_land_on_the_unfinished_lap():
+    """There is no lap to align the clocks on, but only one lap they can be on.
+
+    A car held at a standstill by the guard for the whole session is *entirely*
+    guard events; dropping them for want of a clock offset would report none.
+    """
+    rows = lap_detail.build(lap_times=[], penalty_events=[],
+                            recovery_stamps=[1000.0, 1005.0],
+                            guard_slow_stamps=[1001.0, 1002.0, 1003.0],
+                            lap_stamps=[])
+    assert len(rows) == 1
+    assert rows[0]['recoveries'] == 2
+    assert rows[0]['guard_slow'] == 3
+
+
 def test_rows_exist_for_every_completed_lap_even_a_quiet_one():
     rows = lap_detail.build(lap_times=[37.9, 37.5], penalty_events=[],
                             recovery_stamps=[], guard_slow_stamps=[],

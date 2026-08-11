@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-11 11:50",
+  "generated": "2026-08-11 16:52",
   "target_laps": 5,
   "target_s": 40.0,
   "current": {
@@ -9144,7 +9144,7 @@
       "finished": false,
       "required": 6,
       "penalty_s": 48.3,
-      "final_position": null,
+      "final_position": 3,
       "blocked_by": "never completed a lap",
       "laps": [],
       "completed": 0,
@@ -10040,6 +10040,55 @@
       "guard_slow": 0,
       "result": "fail",
       "note": "The first run whose contacts are actually recorded. Started with SIM_MODE=race CMD='/aichallenge/run_evaluation.bash', which produces d1-result-details.json; the bare make simulator-race path does not, which is why R56-R58 show n/r for kart and wall hits rather than zero. Result: 5 of the 6 required laps, 7 kart contacts and 1 wall contact, 189.8 s of penalty time, 26 recoveries. Recovery kept the session alive through every contact, but with nearly a third of the 600 s spent frozen there was no room for the sixth lap. Player.log was copied out with tools/save_sim_artifacts.sh so positions can be reconstructed; AWSIM logged a sixth line crossing at 593 s that the judge did not count. This run's own result-summary.json was lost -- an early version of that script overwrote it with the stale copy from the shared /aichallenge mount -- so final_position is unavailable here; the script now refuses to overwrite.",
+      "live": false
+    },
+    {
+      "id": "R60",
+      "time": "parallel · 3 karts, 1 stack",
+      "change": "3-vehicle grid (parallel.sh: 3 karts, 0 NPCs, sync start, handicap+ranking on, collisions off)",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": true,
+      "recoveries": 0,
+      "lapdetail": [
+        {
+          "lap": 1,
+          "time": null,
+          "crash": 0,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 0,
+          "guard_slow": 843,
+          "penalty_s": 0.0,
+          "limit_rank": null
+        }
+      ],
+      "has_details": true,
+      "finished": false,
+      "required": 6,
+      "penalty_s": 0.0,
+      "final_position": 3,
+      "blocked_by": "blocked on the grid by a parked kart 0.84 m ahead — the other two karts have no controller and never move",
+      "laps": [],
+      "completed": 0,
+      "target": 6,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 843,
+      "result": "partial",
+      "note": "A 3-kart grid driven by a single Autoware stack, because three stacks do not fit on this 8-core host (measured 2026-08-04: load average 30.6, all three at 0 laps). parallel.sh puts three real vehicles on the grid, so the two without a controller stay parked where they start. One of them sits 0.84 m in front of ours: collision_guard closed from 3.05 m to 0.84 m and then held the car at 0.00 m/s for the whole 600 s (721 slow: cap events, 0 EMERGENCY). That is the guard behaving correctly for a lane that is genuinely blocked; getting past a stationary car needs lateral avoidance, which is off. stuck_recovery never fired, also correct: it arms only after the car has once reached 2 m/s, precisely so it cannot reverse off the grid. Result: 0 laps for all three vehicles, no penalties (parallel.sh runs with collisions off). Nothing here measures pace or contact behaviour -- to race three moving karts on this host use race.sh with NPCs (they move but are invisible to V2X) or fake_v2x_publisher.py.",
       "live": false
     }
   ]

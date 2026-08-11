@@ -137,6 +137,12 @@ def build(lap_times, penalty_events, recovery_stamps, guard_slow_stamps,
     for i, t in enumerate(lap_times):
         row(i + 1)['time'] = round(float(t), 1)
 
+    # A run that completed nothing is the most important kind of result to be able
+    # to look at, so give it the one row it is entitled to: the lap it never
+    # finished. Without this it has no rows at all and vanishes from the page.
+    if not completed:
+        row(1)
+
     for ev in penalty_events or []:
         kind = ev.get('kind')
         if kind not in PENALTY_KINDS:
@@ -155,6 +161,12 @@ def build(lap_times, penalty_events, recovery_stamps, guard_slow_stamps,
 
     for stamps, field in ((recovery_stamps, 'recoveries'), (guard_slow_stamps, 'guard_slow')):
         if not to_race:
+            # No completed lap means no shared event to align the two clocks on --
+            # but it also means there is only one lap these can belong to, so they
+            # are placed rather than dropped. (A 0-lap run held at a standstill by
+            # the guard is *all* guard events; reporting none would be absurd.)
+            if not completed and stamps:
+                row(1)[field] += len(stamps)
             continue
         for ts in stamps or []:
             race_time = to_race(float(ts))
