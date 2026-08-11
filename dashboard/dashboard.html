@@ -128,7 +128,7 @@
 
 <script type="application/json" id="run-data">
 {
-  "generated": "2026-08-11 16:52",
+  "generated": "2026-08-11 17:09",
   "target_laps": 5,
   "target_s": 40.0,
   "current": {
@@ -10199,7 +10199,7 @@
           "wall": 0,
           "over": 0,
           "recoveries": 0,
-          "guard_slow": 843,
+          "guard_slow": 864,
           "penalty_s": 0.0,
           "limit_rank": null
         }
@@ -10215,9 +10215,119 @@
       "target": 6,
       "collisions": null,
       "guard_emergency": 0,
-      "guard_slow": 843,
+      "guard_slow": 864,
       "result": "partial",
       "note": "A 3-kart grid driven by a single Autoware stack, because three stacks do not fit on this 8-core host (measured 2026-08-04: load average 30.6, all three at 0 laps). parallel.sh puts three real vehicles on the grid, so the two without a controller stay parked where they start. One of them sits 0.84 m in front of ours: collision_guard closed from 3.05 m to 0.84 m and then held the car at 0.00 m/s for the whole 600 s (721 slow: cap events, 0 EMERGENCY). That is the guard behaving correctly for a lane that is genuinely blocked; getting past a stationary car needs lateral avoidance, which is off. stuck_recovery never fired, also correct: it arms only after the car has once reached 2 m/s, precisely so it cannot reverse off the grid. Result: 0 laps for all three vehicles, no penalties (parallel.sh runs with collisions off). Nothing here measures pace or contact behaviour -- to race three moving karts on this host use race.sh with NPCs (they move but are invisible to V2X) or fake_v2x_publisher.py.",
+      "live": false
+    },
+    {
+      "id": "R61",
+      "time": "race NPC2 · repeat of R59",
+      "change": "repeat of R59 (race.sh, 2 NPC karts, via the evaluation bundle)",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": true,
+      "recoveries": 27,
+      "lapdetail": [
+        {
+          "lap": 1,
+          "time": 73.2,
+          "crash": 0,
+          "wall": 1,
+          "over": 0,
+          "recoveries": 2,
+          "guard_slow": 0,
+          "penalty_s": 8.5,
+          "limit_rank": null
+        },
+        {
+          "lap": 2,
+          "time": 87.0,
+          "crash": 1,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 3,
+          "guard_slow": 0,
+          "penalty_s": 20.7,
+          "limit_rank": null
+        },
+        {
+          "lap": 3,
+          "time": 127.9,
+          "crash": 2,
+          "wall": 1,
+          "over": 0,
+          "recoveries": 6,
+          "guard_slow": 0,
+          "penalty_s": 73.1,
+          "limit_rank": null
+        },
+        {
+          "lap": 4,
+          "time": 94.2,
+          "crash": 1,
+          "wall": 1,
+          "over": 0,
+          "recoveries": 4,
+          "guard_slow": 0,
+          "penalty_s": 18.6,
+          "limit_rank": null
+        },
+        {
+          "lap": 5,
+          "time": 73.1,
+          "crash": 0,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 2,
+          "guard_slow": 0,
+          "penalty_s": 0.0,
+          "limit_rank": null
+        },
+        {
+          "lap": 6,
+          "time": null,
+          "crash": 3,
+          "wall": 2,
+          "over": 0,
+          "recoveries": 10,
+          "guard_slow": 0,
+          "penalty_s": 70.9,
+          "limit_rank": null
+        }
+      ],
+      "has_details": true,
+      "finished": false,
+      "required": 6,
+      "penalty_s": 191.8,
+      "final_position": 1,
+      "blocked_by": "out of time: 192 s of penalties (7 kart, 5 wall), 27 recoveries, 1 lap still to run at 73 s best pace",
+      "laps": [
+        73.2,
+        87.0,
+        127.9,
+        94.2,
+        73.1
+      ],
+      "completed": 5,
+      "target": 6,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "fail",
+      "note": "A straight repeat of R59 to see how much of that result was luck. It is reproducible: 5 of 6 laps again, 191.8 s of penalties against R59's 189.8 s, position 1 again. The mix shifted -- 7 kart contacts (153.4 s) and 5 wall contacts (38.5 s) here, against 7 kart and 1 wall last time -- so the wall contacts vary while the kart contacts do not. 25 recoveries (R59: 26), again nearly all in the same patch around (89647, 43171) where the NPC blocks. Pace when clear is better than R59 (best lap 73.1 s vs 87.4 s), which is what makes the penalty time so decisive: roughly a third of the 600 s is spent frozen, and that is the whole margin for the sixth lap. Player.log kept, but it holds only 2 NpcLap lines, so there is little to reconstruct position from.",
       "live": false
     }
   ]
