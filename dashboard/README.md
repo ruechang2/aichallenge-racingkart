@@ -14,7 +14,44 @@ Traces every tuning experiment against lap time and 5-lap completion, so it's cl
   lap times and guard activity, and injects the result into `dashboard.html`.
 - `dashboard.html` — self-contained page (open in a browser or publish as an Artifact).
   Reads its data from an embedded `<script id="run-data">` block that the parser rewrites.
+- `lap_detail.py` — per-lap breakdown: which lap an event belongs to, and what
+  position we held at a given moment. Pure arithmetic, no file formats.
+- `test_lap_detail.py` — its tests (`python3 -m pytest dashboard/test_lap_detail.py`).
 - `run_data.json` — the parsed payload (also written out for reuse).
+
+## The two views
+**Run breakdown** answers "what happened in that session": one block per simulator
+start (newest open), showing laps completed against the session's requirement, then
+a row per lap with its time, kart and wall contacts, recoveries, speed limits, the
+position held while limited, and penalty seconds — closing with why the run did not
+finish. **Experiment log** answers the other question, "which config change moved the
+needle", and stays one row per run.
+
+### What a run has to produce to fill it in
+| Column | Needs | If missing |
+|---|---|---|
+| lap time, laps completed | `result-summary.json` or `result-details.json` | falls back to the controller's log |
+| kart / wall / over-speed contacts, penalty s | **`result-details.json`** | shown as `n/r`, *never* as 0 |
+| finished, required laps, final position | `result-summary.json` | "no judge record" |
+| recoveries, guard slow | `autoware.log` | always present |
+| position while speed-limited | **`Player.log`** | shown as `—` |
+
+Only the **evaluation bundle** writes `result-details.json`. A run started as
+`make simulator-<mode>` + `make autoware-simulator` has no contact data at all —
+which is why `n/r` exists and why reading a blank as "no collisions" is a mistake
+that has already been made once here. To get a full row:
+
+```bash
+SIM_MODE=race CMD='/aichallenge/run_evaluation.bash' docker compose run -d --name aic-eval-race autoware-command
+# ...after it finishes, before removing the container:
+tools/save_sim_artifacts.sh aic-eval-race output/<ts>/d1
+```
+
+`save_sim_artifacts.sh` copies out `Player.log`, which is the only record of the
+*opponents'* lap crossings and therefore the only way to reconstruct our position
+during the race — AWSIM exposes nothing but `final_position` anywhere else. It never
+overwrites a file that is already there; `/aichallenge` is a shared bind mount and the
+`result-summary.json` sitting in it can belong to an older race.
 
 ## Refresh after a run
 ```bash

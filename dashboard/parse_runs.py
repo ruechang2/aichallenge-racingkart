@@ -29,6 +29,8 @@ import os
 import re
 import statistics
 
+import lap_detail
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 
@@ -41,6 +43,9 @@ RE_RECOVERY = re.compile(r'stuck_recovery up \(enabled=(\w+)')
 # One WARN per incident, so counting them counts recoveries — the whole point of a
 # traffic run is how often the car had to dig itself out, not just whether it finished.
 RE_STUCK = re.compile(r'STUCK detected')
+# Stamped versions of the two events that have to land on the right lap.
+RE_STUCK_TS = re.compile(r'\[(\d{10}\.\d+)\] \[stuck_recovery\]: STUCK detected')
+RE_SLOW_TS = re.compile(r'\[(\d{10}\.\d+)\] \[collision_guard\]: slow: cap')
 # Lateral avoidance is a launch arg, not a config value, so it only shows up as the
 # controller's own startup warning.
 RE_AVOID = re.compile(r'USE_OBSTACLE_AVOIDANCE is enabled')
@@ -89,6 +94,61 @@ PARAM_FIELD = {'v_max': 'vmax', 'a_max': 'amax', 'a_min': 'amin', 'ay_max': 'ay'
 MIN_PLAUSIBLE_LAP_S = 30.0
 
 
+def _load_json(path):
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def awsim_details(logdir):
+    """AWSIM's per-vehicle record: laps, whether it finished, and every penalty.
+
+    Written only by the evaluation bundle (``run_evaluation.bash``), so a run
+    started as bare ``make simulator-<mode>`` + ``make autoware-simulator`` has
+    none and its collision counts are simply unknown — not zero.
+    """
+    for name in ('d1-result-details.json', 'result-details.json'):
+        data = _load_json(os.path.join(logdir, name))
+        if data:
+            return data
+    return None
+
+
+def awsim_player_log(logdir):
+    """Crossing times for us and the NPCs, for reconstructing our position.
+
+    Player.log lives inside the simulator container and is lost with it, so this
+    is only present for runs where it was copied out afterwards
+    (``tools/save_sim_artifacts.sh``).
+    """
+    path = os.path.join(logdir, 'Player.log')
+    if not os.path.exists(path):
+        return None, {}
+    with open(path, errors='replace') as fh:
+        return lap_detail.parse_player_log(fh.read())
+
+
+def awsim_summary(logdir):
+    """The judge's session record: our position, whether we finished, the target.
+
+    Written by AWSIM itself, so it exists for any run whose result-summary.json
+    was kept — including ones started without the evaluation bundle, which have
+    no result-details.json and therefore no contact data.
+    """
+    data = _load_json(os.path.join(logdir, 'result-summary.json'))
+    if not data:
+        return {}
+    required = (data.get('session') or {}).get('required_laps')
+    for veh in data.get('vehicles') or []:
+        if veh.get('laps'):
+            return {'final_position': veh.get('final_position'),
+                    'finished': veh.get('finished'),
+                    'required_laps': required}
+    return {'required_laps': required}
+
+
 def awsim_lap_times(logdir):
     """Per-lap times straight from AWSIM's ``result-summary.json``, if it is there.
 
@@ -98,13 +158,11 @@ def awsim_lap_times(logdir):
     110/215/275/327/377/425 s against AWSIM's own 107/107/61/50/50/50 s. Where
     the simulator's own record exists it outranks the log.
     """
-    path = os.path.join(logdir, 'result-summary.json')
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path) as fh:
-            data = json.load(fh)
-    except Exception:
+    details = awsim_details(logdir)
+    if details and details.get('laps'):
+        return [float(t) for t in details['laps']]
+    data = _load_json(os.path.join(logdir, 'result-summary.json'))
+    if not data:
         return None
     # Multi-vehicle sessions list every car; ours is the one that drove.
     for veh in data.get('vehicles') or []:
@@ -185,10 +243,40 @@ def parse_log(path, min_lap=MIN_PLAUSIBLE_LAP_S):
         if tsm:
             events.append((float(tsm.group(1)), field, value))
 
+    # --- per-lap breakdown ---
+    logdir = os.path.dirname(path)
+    details = awsim_details(logdir) or {}
+    ego_crossings, npc_crossings = awsim_player_log(logdir)
+    lapdetail = lap_detail.build(
+        lap_times=[t for _, t, _ in laps],
+        penalty_events=details.get('penalty_events'),
+        recovery_stamps=[float(t) for t in RE_STUCK_TS.findall(txt)],
+        guard_slow_stamps=[float(t) for t in RE_SLOW_TS.findall(txt)],
+        lap_stamps=[ts for _, _, ts in laps],
+        ego_crossings=ego_crossings,
+        npc_crossings=npc_crossings,
+    )
+    summary = awsim_summary(logdir)
+    required = int(details.get('required_laps') or summary.get('required_laps') or 0) or None
+    finished = details.get('finished')
+    if finished is None:
+        finished = summary.get('finished')
+    # Only the judge knows whether it finished; without its file, say so rather
+    # than inferring "no" from a lap count that may just be a short dev session.
+    timed_out = bool(details.get('session_timeout')) and finished is False
+    blocked_by = None
+    if finished is not None:
+        blocked_by = lap_detail.blocker(finished, len(lap_times),
+                                        required or 0, lapdetail, timed_out)
+
     return dict(vmax=vmax, amax=amax, amin=amin, ay=ay, q0=q0, width=width,
                 margin=margin, steer=steer, avoid=avoid, traffic=traffic,
                 profile=profile, wp_off=wp_off, corners=corners, guard=guard,
                 recovery=recovery, recoveries=recoveries,
+                lapdetail=lapdetail, blocked_by=blocked_by, finished=finished,
+                required=required, has_details=bool(details),
+                penalty_s=round(float(details.get('penalty_total_seconds') or 0.0), 1),
+                final_position=summary.get('final_position'),
                 emerg=emerg, slow=slow, lap_times=lap_times, laps=laps,
                 events=events, last_lap_ts=last_lap_ts, last_ts=last_ts,
                 first_ts=first_ts, dropped_laps=dropped, has_cfg=vmax is not None)
@@ -364,11 +452,23 @@ def collect(output_dir, target, include_all, min_laps=1, since=None):
                 'profile': cfg['profile'], 'wp_off': cfg['wp_off'],
                 'corners': cfg['corners'] or '—', 'guard': cfg['guard'],
                 'recovery': cfg['recovery'], 'recoveries': rec['recoveries'],
+                # Per-lap breakdown, and why the run stopped short. Only the
+                # evaluation bundle writes the file these come from, so
+                # has_details=false means "not recorded", never "none happened".
+                'lapdetail': rec['lapdetail'] if seg_i == 0 else [],
+                'has_details': rec['has_details'],
+                'finished': rec['finished'],
+                'required': rec['required'],
+                'penalty_s': rec['penalty_s'],
+                'final_position': rec['final_position'],
+                'blocked_by': meta.get('blocker') or rec['blocked_by'],
                 'laps': lap_times, 'completed': len(lap_times),
-                'target': target,
+                # The session's own requirement beats the dashboard's default: a
+                # 6-lap race that managed 5 is not "5/5 done".
+                'target': rec['required'] or target,
                 'collisions': meta.get('collisions'),
                 'guard_emergency': rec['emerg'], 'guard_slow': rec['slow'],
-                'result': meta.get('result') or classify(seg_rec, target),
+                'result': meta.get('result') or classify(seg_rec, rec['required'] or target),
                 'note': meta.get('note'),
                 'live': is_live,
             })
