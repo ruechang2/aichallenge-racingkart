@@ -165,16 +165,22 @@ class MPC:
             umax_dyn[self.nu*n] = min(vmax_dyn, umax_dyn[self.nu*n])
 
         # Update path constraints
+        # Where the car actually is, so the corridor can be made to contain it.
+        current_e_y = self.model.spatial_state.e_y
+
         if self.use_obstacle_avoidance and not self.use_path_constraints_topic:
             ub, lb, _ = self.model.reference_path.update_path_constraints(
                 self.model.wp_id + 1,
                 [self.model.temporal_state.x, self.model.temporal_state.y, self.model.temporal_state.psi],
                 N, self.model.length, self.model.width, safety_margin,
-                self._scaled_wall_margin(safety_margin))
+                self._scaled_wall_margin(safety_margin),
+                current_e_y=current_e_y)
         else:
             ref_wp_id = (self.model.wp_id + 1) % len(self.model.reference_path.path_constraints[0])
-            ub = self.model.reference_path.path_constraints[0][ref_wp_id]
-            lb = self.model.reference_path.path_constraints[1][ref_wp_id]
+            # Copy: these are rows of the precomputed constraint table, and the
+            # margin adjustment below writes through a view straight into it.
+            ub = np.array(self.model.reference_path.path_constraints[0][ref_wp_id])
+            lb = np.array(self.model.reference_path.path_constraints[1][ref_wp_id])
             self.model.reference_path.border_cells.current_wp_id = ref_wp_id
 
             # Update safety margin if provided as argument and different from current value
@@ -186,6 +192,12 @@ class MPC:
                 infeasible_index = ub < lb
                 ub[infeasible_index] = 0.0
                 lb[infeasible_index] = 0.0
+
+            # Same guarantee as the avoidance branch: a car knocked, spun or
+            # reversed off the line can sit outside even the static corridor, and
+            # then no input satisfies both the pinned initial state and the
+            # bounds. Admit where it is so a way back exists.
+            ub, lb = self.model.reference_path.admit_current_offset(ub, lb, current_e_y)
 
         # Update dynamic state constraints
         xmin_dyn[0] = xmax_dyn[0] = self.model.spatial_state.e_y

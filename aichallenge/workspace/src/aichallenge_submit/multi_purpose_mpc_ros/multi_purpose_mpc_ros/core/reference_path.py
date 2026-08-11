@@ -783,6 +783,55 @@ class ReferencePath:
 
         return free_segments
 
+    # Headroom to leave beyond where the car currently sits. The return itself is
+    # spread over the WHOLE horizon: a short funnel is as infeasible as no funnel.
+    # Measured — corridor [-4.15, 1.90] with the car at e_y 2.53 and nearly
+    # stopped, opened over 5 steps, still would not solve, because coming back
+    # 0.8 m within five waypoints exceeds what the steering rate can do at that
+    # speed. Over the full horizon the same return is gentle enough to plan.
+    RETURN_SLACK = 0.20  # [m]
+
+    @staticmethod
+    def admit_current_offset(ub_hor, lb_hor, e_y, steps=None, slack=None):
+        """Widen the start of the corridor so it contains where the car IS.
+
+        The QP pins the initial state to the measured ``e_y`` and constrains every
+        later step to the corridor. If the car sits outside that corridor, no
+        input satisfies both and the problem is infeasible *no matter how far the
+        safety margin is relaxed* — relaxing stops at the static track bounds, and
+        the car can be beyond them (measured: stranded 2.0-2.3 m off the line,
+        full steering lock, motionless, with the MPC emitting a permanent stop).
+
+        So the bound is opened to admit the current offset and tapered back to the
+        nominal corridor over the next few steps. This does not permit the car to
+        go anywhere new — it is already there — it makes the problem describe
+        reality, so the solver can produce the line that brings it back.
+        Longitudinal safety stays with collision_guard.
+        """
+        if e_y is None or len(ub_hor) == 0:
+            return ub_hor, lb_hor
+        # Default: give the car the whole horizon to come back.
+        steps = len(ub_hor) if steps is None else steps
+        slack = ReferencePath.RETURN_SLACK if slack is None else slack
+        steps = max(1, min(steps, len(ub_hor)))
+
+        over_ub = e_y - ub_hor[0]
+        over_lb = lb_hor[0] - e_y
+        if over_ub <= 0.0 and over_lb <= 0.0:
+            return ub_hor, lb_hor
+
+        excess = max(over_ub, over_lb) + slack
+        # Only ever widen, so ub >= lb is preserved by construction.
+        for i in range(min(steps, len(ub_hor))):
+            # Reaches exactly zero on the last step, so the corridor is back to
+            # nominal by the end of the horizon rather than a hair wide of it.
+            taper = excess * (1.0 - i / float(max(steps - 1, 1)))
+            if over_ub > 0.0:
+                ub_hor[i] += taper
+            if over_lb > 0.0:
+                lb_hor[i] -= taper
+        return ub_hor, lb_hor
+
     def update_simple_path_constraints(self, N, safety_margin):
         upper_bounds = []
         lower_bounds = []
@@ -826,7 +875,8 @@ class ReferencePath:
         self.set_border_cells(
             dynamic_upper_bounds, dynamic_lower_bounds, self.n_waypoints - 1, N)
 
-    def update_simple_path_constraints_horizon(self, wp_id, N, safety_margin):
+    def update_simple_path_constraints_horizon(self, wp_id, N, safety_margin,
+                                               current_e_y=None):
         # container for constraints and border cells
         upper_bounds = []
         lower_bounds = []
@@ -867,10 +917,14 @@ class ReferencePath:
         self.border_cells.dynamic_upper_bounds[wp_id] = np.array(dynamic_upper_bounds).reshape(N, 2)
         self.border_cells.dynamic_lower_bounds[wp_id] = np.array(dynamic_lower_bounds).reshape(N, 2)
 
-        return np.array(upper_bounds), np.array(lower_bounds)
+        # A car knocked or reversed off the line can be outside even the static
+        # corridor; without this the QP is infeasible and it never drives again.
+        ub, lb = self.admit_current_offset(
+            np.array(upper_bounds), np.array(lower_bounds), current_e_y)
+        return ub, lb
 
     def update_path_constraints(self, wp_id, pose, N, model_length, model_width,
-                                safety_margin, wall_margin=None):
+                                safety_margin, wall_margin=None, current_e_y=None):
         """
         Compute upper and lower bounds of the drivable area orthogonal to
         the given waypoint.
@@ -1226,7 +1280,9 @@ class ReferencePath:
             waypoint_mid.ub_sm = new_bound_sm[0]
             waypoint_mid.lb_sm = new_bound_sm[1]
 
-        return np.array(ub_hor), np.array(lb_hor), np.array(border_cells_hor_sm)
+        ub_arr, lb_arr = self.admit_current_offset(
+            np.array(ub_hor), np.array(lb_hor), current_e_y)
+        return ub_arr, lb_arr, np.array(border_cells_hor_sm)
 
 
 if __name__ == '__main__':
