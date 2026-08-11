@@ -386,8 +386,6 @@ def collect(output_dir, target, include_all, min_laps=1, since=None):
 
     runs = []
     for run_ts in sorted(logs):
-        if since and run_ts[:8] < since:
-            continue
         dom, path = logs[run_ts]
         rec = parse_log(path)
         meta = load_meta(os.path.dirname(path))
@@ -411,7 +409,11 @@ def collect(output_dir, target, include_all, min_laps=1, since=None):
             continue  # boot-only / failed-to-drive run
         if n < min_laps and not keep:
             continue  # interrupted / too-short run (override with run_meta keep:true)
-        runs.append((run_ts, rec, meta))
+        # `since` is applied at the end, not here: run ids have to stay put. R58 is
+        # written into run_meta notes and two READMEs, and would silently become R16
+        # the moment the window moved if numbering only counted what is displayed.
+        shown = not (since and run_ts[:8] < since)
+        runs.append((run_ts, rec, meta, shown))
 
     # Order by when the run actually happened. Directory names are usually
     # timestamps, but not always (e.g. `20260726-w170`), and a wrong order would
@@ -420,7 +422,7 @@ def collect(output_dir, target, include_all, min_laps=1, since=None):
 
     out, prev_cfg = [], None
     n_out = 0
-    for run_ts, rec, meta in runs:
+    for run_ts, rec, meta, shown in runs:
         # `LOG_DIR` is usually a timestamp, but a hand-named directory
         # (`20260726-w170`) must not be sliced into nonsense like "w1:70".
         nice_time = '%s-%s %s:%s' % (run_ts[4:6], run_ts[6:8], run_ts[9:11], run_ts[11:13]) \
@@ -441,6 +443,9 @@ def collect(output_dir, target, include_all, min_laps=1, since=None):
             seg_rec = dict(rec, lap_times=lap_times)
             if seg_i < len(segments) - 1:
                 seg_rec['last_ts'] = seg_rec['last_lap_ts'] = None
+            if not shown:
+                prev_cfg = cfg   # still the baseline the next visible run diffs against
+                continue
             out.append({
                 'id': 'R%d' % n_out,
                 'time': label,
@@ -525,8 +530,12 @@ def main():
                     help='per-lap time target in seconds (default 40)')
     ap.add_argument('--min-laps', type=int, default=1,
                     help='drop runs with fewer completed laps (default 1; run_meta keep:true overrides)')
-    ap.add_argument('--since', default=None, metavar='YYYYMMDD',
-                    help='drop runs before this date')
+    # Runs before August are from older AWSIM builds (the 2026-08-03 one dropped the
+    # steer rate limit 0.8 -> 0.6, so their pace is not comparable) and none of them
+    # carry the per-lap contact data this page is built around. Their logs are still
+    # in output/ -- pass --since '' to bring them back.
+    ap.add_argument('--since', default='20260801', metavar='YYYYMMDD',
+                    help="drop runs before this date (default 20260801; pass '' for all)")
     ap.add_argument('--all', action='store_true', help='include runs that completed 0 laps')
     ap.add_argument('--print', dest='show', action='store_true', help='print the JSON payload')
     args = ap.parse_args()

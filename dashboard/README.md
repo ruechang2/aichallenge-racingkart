@@ -56,10 +56,21 @@ overwrites a file that is already there; `/aichallenge` is a shared bind mount a
 ```bash
 python3 dashboard/parse_runs.py            # update dashboard.html in place
 python3 dashboard/parse_runs.py --print    # ...and print the JSON
-python3 dashboard/parse_runs.py --min-laps 2 --since 20260719   # focus recent, drop stubs
+python3 dashboard/parse_runs.py --since ''            # ...including the pre-August runs
 python3 dashboard/parse_runs.py --target-s 40   # per-lap time target (default 40 s)
 ```
 Then reload `dashboard.html` (or re-publish the Artifact).
+
+### Only August onward is shown
+`--since` defaults to **20260801**. Earlier runs are from older AWSIM builds — the
+2026-08-03 one dropped the vehicle's steer rate limit 0.8 → 0.6, so their pace is not
+comparable — and none of them carry the per-lap contact data this page is built
+around. Their logs are untouched in `output/`; `--since ''` brings them all back.
+
+**Run ids do not shift when the window moves.** They are assigned over every parsed
+run and only then filtered, so R58 is R58 whether 17 runs are shown or 59. Notes in
+`run_meta.json` and the package READMEs cite ids by number, and renumbering would
+quietly repoint every one of them.
 
 ## What it extracts (from `autoware.log`)
 | Field | Source line |
