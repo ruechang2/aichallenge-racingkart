@@ -1,13 +1,13 @@
-# Racing Kart — Experiment & Performance Dashboard
+# Racing Kart — Run Breakdown Dashboard
 
-Traces every tuning experiment against lap time and 5-lap completion, so it's clear
-**what actually moved the needle**. Data is auto-parsed from run logs.
+One block per simulator start: **how many laps it completed, and what happened on
+each of them**. Auto-parsed from run logs.
 
-> Earlier versions of this page asserted a 30 km/h / 1.0 m/s² competition rule and a
-> 43 s "physics floor". Neither is documented anywhere in this repo and both are
-> contradicted by measurement (the kart tops out at 37 km/h and laps at 39.5 s), so
-> they were removed on 2026-07-27. **Confirm the real limits against the official
-> rules before submitting.**
+> Reset on 2026-08-11 to this single view. It previously also carried KPI tiles, an
+> auto-derived findings panel, a config-comparison table and a lap-time chart; those
+> were removed. `parse_runs.py` still extracts the config fields they used and they
+> are still in `run_data.json`, so any of it can be rebuilt from the parsed payload
+> without re-running anything.
 
 ## Files
 - `parse_runs.py` — scans `output/*/d*/autoware.log`, extracts each run's config,
@@ -19,13 +19,12 @@ Traces every tuning experiment against lap time and 5-lap completion, so it's cl
 - `test_lap_detail.py` — its tests (`python3 -m pytest dashboard/test_lap_detail.py`).
 - `run_data.json` — the parsed payload (also written out for reuse).
 
-## The two views
-**Run breakdown** answers "what happened in that session": one block per simulator
-start (newest open), showing laps completed against the session's requirement, then
-a row per lap with its time, kart and wall contacts, recoveries, speed limits, the
-position held while limited, and penalty seconds — closing with why the run did not
-finish. **Experiment log** answers the other question, "which config change moved the
-needle", and stays one row per run.
+## The view
+Newest run open, the rest collapsed. Each block headlines the **session timestamp**
+and **laps completed** against the session's own requirement, then gives a row per
+lap: time, kart contacts, wall contacts, recoveries, over-speed penalties, guard
+slowdowns, the position held while speed-limited, and penalty seconds. It closes
+with why the run did not finish.
 
 ### What a run has to produce to fill it in
 | Column | Needs | If missing |
@@ -76,8 +75,11 @@ Then reload `dashboard.html` (or re-publish the Artifact).
 | recovery state / count | `stuck_recovery up (enabled=…)`, `STUCK detected` count |
 | lap times | `Lap N completed! Lap time: X s` (+ ROS stamp) |
 | **live param changes** | `<param> was updated to '<value>'` (+ ROS stamp) |
-| **change vs previous** | auto-diff of config against the previous row |
+| **change vs previous** | auto-diff of config against the previous run |
 | **result** | `ok` / `best` / `partial` / `fail` (stall heuristic) |
+
+The config fields are no longer displayed anywhere; they stay in `run_data.json`
+because they cost nothing to keep and the comparison view may come back.
 
 Commented-out preset blocks in `config.yaml` are echoed to the log too, but they
 carry a leading `#`, so only the live values are picked up.
@@ -117,10 +119,8 @@ hand-named `LOG_DIR` (`output/20260726-w170`) still lands in the right place.
 
 ### Clear laps vs traffic laps are never mixed
 A run with another kart on track is not comparable pace, so the `traffic` flag keeps
-them apart: the "Median lap (current)" and "Under target" KPIs count **clear** laps
-on the current tune only. Treat the traffic median in the findings panel as a floor
-rather than a cost — it pools runs where the opponent was never caught with runs
-where it was.
+them apart. Nothing on the page pools them now, but honour it in anything built on
+`run_data.json`.
 
 ### Implausible laps are dropped
 Laps under `MIN_PLAUSIBLE_LAP_S` (30 s) are discarded as simulator artefacts. The
@@ -128,15 +128,16 @@ raceline is ~345 m and the kart tops out at 37 km/h, so even flat out a lap take
 33.6 s; a 20 s lap appeared once after a wall recovery and would otherwise have
 become the headline "best lap" and the largest apparent improvement.
 
-## Collisions and manual labels — `run_meta.json`
-Collisions are **not** in `autoware.log` (they live in the AWSIM container's
-`Player.log`). Capture them and record per run with a `run_meta.json` next to the
-log (`output/<ts>/d1/run_meta.json`):
+## Manual labels and overrides — `run_meta.json`
+Drop one next to the log (`output/<ts>/d1/run_meta.json`):
 ```json
-{ "collisions": 0, "change": "custom note", "label": "my name",
-  "result": "partial", "note": "why", "exclude": false, "keep": true }
+{ "label": "my name", "change": "custom note", "blocker": "what really stopped it",
+  "laps": [64.8, 108.4], "result": "partial", "note": "why",
+  "exclude": false, "keep": true }
 ```
-- `collisions` — shown in the table (else `—`).
+- `blocker` — override the derived "completion blocked by" line, for a reason only a
+  human watched happen. `laps` — real per-lap times for an old run whose
+  `result-summary.json` was never kept.
 - `change` / `label` — override the auto-derived text (`change` applies to the first segment).
 - `result` — override the classifier, e.g. a run AWSIM ended on its own is not a
   control `fail`. `note` — free text carried into the JSON.
