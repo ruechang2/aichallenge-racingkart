@@ -19,21 +19,22 @@ MPC  --/control/command/control_cmd_mpc-->  collision_guard  --/control/command/
 
 Wiring is done in `aichallenge_submit_launch/launch/control/mpc.launch.xml`
 (the MPC output is remapped to `.../control_cmd_mpc` and the guard is inserted).
-**The layer ships DISABLED as of 2026-08-11** (`use_collision_guard` defaults to
-false in `reference.launch.xml`); re-enable per run with
-`use_collision_guard:=true`.
+**The layer ships ENABLED.** It was switched off on 2026-08-11 and back on the
+same day, both by request; disable per run with `use_collision_guard:=false`.
 
-Why: the guard only sees karts on `/v2x/vehicle_positions`, which AWSIM
-publishes for ego-type vehicles only. Every NPC test therefore ran with it
-silent — 0 `slow: cap` across four `race.sh` runs that drew 4-10 kart contacts
-each — so it looked free. On a real three-kart grid it is not: it logged 864
-speed caps, held the car 0.84 m behind a stationary kart for the full 600 s and
-scored **0 laps** (dashboard R60). The same scenario with the guard off finishes
-**6/6 in position 1**. Braking correctly for a blocked lane still costs the whole
-session while nothing here can steer around it.
+Know the failure it can cause, because it is silent in most local testing. The
+guard only sees karts on `/v2x/vehicle_positions`, which AWSIM publishes for
+ego-type vehicles only, so every NPC test ran with it completely quiet — 0
+`slow: cap` across four `race.sh` runs that drew 4-10 kart contacts each. On a
+real three-kart grid it is not quiet: it logged 864 speed caps, held the car
+0.84 m behind a stationary kart for the full 600 s and scored **0 laps**
+(dashboard R60), where the same scenario with the guard out of the chain
+finished **6/6 in position 1** (R64).
 
-The trade: the car now hits karts it can see, at roughly 23 s of penalty each.
-Turn the guard back on once lateral avoidance works, so braking becomes the
+That is correct braking for a lane that is genuinely blocked, and it still costs
+the whole session, because nothing here can steer around the blockage yet. If a
+run ends parked behind something, try `use_collision_guard:=false` to confirm the
+guard is the cause. The real fix is lateral avoidance, which makes braking a
 fallback rather than the only response.
 
 ## Logic

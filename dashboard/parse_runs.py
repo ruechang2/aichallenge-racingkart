@@ -142,16 +142,19 @@ def awsim_summary(logdir):
         return {}
     required = (data.get('session') or {}).get('required_laps')
     vehicles = data.get('vehicles') or []
-    ours = next((v for v in vehicles if v.get('laps')), None)
+    # Match this log's domain to its vehicle number (d1 -> 1) FIRST. "The one that
+    # completed laps" is only a good guess when a single kart is being driven; in a
+    # multi-stack session the summary lists every kart and that heuristic hands d1
+    # the fastest kart's record — a 1-lap run reported as finished because another
+    # stack finished. Single-ego sessions list three entries all numbered 1, so the
+    # match lands on the first, which is the one that drove.
+    try:
+        want = int(os.path.basename(logdir).lstrip('d'))
+    except ValueError:
+        want = None
+    ours = next((v for v in vehicles if v.get('vehicle_number') == want), None)
     if ours is None:
-        # Nobody completed a lap, so "the one that drove" cannot pick us out. Fall
-        # back to the vehicle number matching this log's domain (d1 -> 1), which is
-        # how the run directories are named, then to the first entry.
-        try:
-            want = int(os.path.basename(logdir).lstrip('d'))
-        except ValueError:
-            want = None
-        ours = next((v for v in vehicles if v.get('vehicle_number') == want), None) \
+        ours = next((v for v in vehicles if v.get('laps')), None) \
             or (vehicles[0] if vehicles else None)
     if ours is None:
         return {'required_laps': required}

@@ -1,0 +1,20 @@
+schemaVersion: 2
+name: start_from_p3
+description: Ego kart starts from the third grid slot instead of pole
+
+# ONLY the ego is listed. AWSIM takes the scenario's vehicle count as
+# authoritative -- listing all three slots printed
+#   "--vehicles 1 is overridden by scenario vehicle count 3"
+# and put three ego karts on the grid, two of them driverless roadblocks, which
+# is the parallel.sh scenario rather than race.sh. With one entry the session
+# stays 1 ego + 2 moving NPCs and only the starting slot changes.
+#
+# The coordinate is grid slot 3 from StreamingAssets/Race/official.yaml, copied
+# verbatim; official.yaml is the organisers' file and is left alone.
+# Handicap is applied by position, so starting at the back also means starting
+# without the leader's speed cap.
+
+vehicles:
+  "1":
+    at: [371.45, -9.29]
+    yaw: -121.84

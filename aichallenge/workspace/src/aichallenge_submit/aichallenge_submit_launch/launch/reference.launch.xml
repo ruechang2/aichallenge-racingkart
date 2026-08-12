@@ -29,21 +29,22 @@
        stays solvable; until someone does that and re-validates, leave this alone.
        It is still available as use_obstacle_avoidance:=true for that work. -->
   <arg name="use_obstacle_avoidance" default="false" description="steer around other karts (V2X)"/>
-  <!-- OFF as of 2026-08-11, by request, and the measurement supports it.
-       The guard only ever sees karts on /v2x/vehicle_positions, which AWSIM
-       publishes for ego-type vehicles only — so every NPC test here ran with it
-       silent (0 slow:cap across R59/R61/R62/R63 despite 4-10 contacts each) and
-       it looked harmless. On a real grid it is not: with three ego karts (R60)
-       it logged 864 speed caps, held the car 0.84 m behind a stationary kart for
-       the whole 600 s and finished 0 laps. Braking correctly for a blocked lane
-       still costs the entire session, because nothing here can go around yet
-       (use_obstacle_avoidance is off, and see stuck_recovery/README).
-       The trade this makes: the car will now hit karts it can see. Measured cost
-       of a kart contact is ~23 s of penalty, and a session survives several of
-       them — R62 finished 6 laps with four. Turn the guard back on with
-       use_collision_guard:=true once lateral avoidance actually works, at which
-       point braking becomes a fallback rather than the only response. -->
-  <arg name="use_collision_guard" default="false" description="longitudinal AEB / speed cap"/>
+  <!-- ON. Switched off on 2026-08-11 and back on the same day, both by request.
+       Keep the measurement that motivated the switch-off, because it is the case
+       to watch: the guard only sees karts on /v2x/vehicle_positions, which AWSIM
+       publishes for ego-type vehicles only, so every NPC test ran with it silent
+       (0 slow:cap across R59/R61/R62/R63 despite 4-10 contacts each) and it
+       looked free. On a real grid it is not — with three ego karts (R60) it
+       logged 864 speed caps, held the car 0.84 m behind a stationary kart for the
+       whole 600 s and scored 0 laps, while the same scenario without it (R64)
+       finished 6/6. Braking correctly for a blocked lane still costs the session
+       while nothing here can steer around one.
+       So with the guard on, expect a permanently blocked lane to end the run, and
+       reach for use_collision_guard:=false to confirm the guard is the cause.
+       The real fix is lateral avoidance, which would make braking a fallback
+       rather than the only response; see stuck_recovery/README and the corridor
+       note on use_obstacle_avoidance above. -->
+  <arg name="use_collision_guard" default="true" description="longitudinal AEB / speed cap"/>
   <!-- Automatic recovery from a stuck vehicle: back out of the wall (or the kart
        we rear-ended), turn the nose back onto the racing line, and drive on.
        AWSIM's own wall recovery is OFF in the official evaluation, so without
