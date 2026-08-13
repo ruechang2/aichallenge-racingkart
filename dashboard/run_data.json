@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-12 23:02",
+  "generated": "2026-08-13 22:27",
   "target_laps": 5,
   "target_s": 40.0,
   "current": {
@@ -15,7 +15,7 @@
     "traffic": false,
     "profile": true,
     "corners": "45/45/45",
-    "guard": "—",
+    "guard": "V2X on · scan off",
     "recovery": true
   },
   "runs": [
@@ -10715,6 +10715,116 @@
       "guard_slow": 0,
       "result": "fail",
       "note": "Three ego karts each driven by their own stack, which the 2026-08-04 note said does not fit on this 8-core host. It half fits. One kart (d3) ran a flawless 6/6 -- 50.6/50.2/50.0/50.0/50.0/50.1 s, 0 infeasible cycles -- while d1 managed 1 lap and d2 none, and those two logged 119 MPC infeasible cycles each against d3's zero. Load average reached 30. That is CPU starvation picking a winner, not racing: whichever MPC gets the cores solves, the other two cannot. Better than the earlier all-three-at-zero result only because rviz is off. This row is d1; the session's real outcome is d3's 6 laps. Fixes worth trying: per-container cpus limits so the three are starved equally rather than first-come-first-served, a cheaper MPC (shorter horizon or lower rate), or separate machines. Also learned here: -batchmode -nographics is unusable, it unthrottles AWSIM so the 600 s session elapses before Autoware connects; and 320x240 -screen-quality Fastest segfaults AWSIM.",
+      "live": false
+    },
+    {
+      "id": "R67",
+      "time": "race NPC2 · guard back on",
+      "change": "use_collision_guard back to default true",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": true,
+      "recoveries": 24,
+      "lapdetail": [
+        {
+          "lap": 1,
+          "time": 83.4,
+          "crash": 0,
+          "wall": 1,
+          "over": 0,
+          "recoveries": 3,
+          "guard_slow": 0,
+          "penalty_s": 8.4,
+          "limit_rank": null
+        },
+        {
+          "lap": 2,
+          "time": 110.4,
+          "crash": 1,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 5,
+          "guard_slow": 0,
+          "penalty_s": 24.1,
+          "limit_rank": null
+        },
+        {
+          "lap": 3,
+          "time": 99.9,
+          "crash": 1,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 4,
+          "guard_slow": 0,
+          "penalty_s": 34.7,
+          "limit_rank": null
+        },
+        {
+          "lap": 4,
+          "time": 112.1,
+          "crash": 1,
+          "wall": 1,
+          "over": 0,
+          "recoveries": 5,
+          "guard_slow": 0,
+          "penalty_s": 42.5,
+          "limit_rank": null
+        },
+        {
+          "lap": 5,
+          "time": 116.4,
+          "crash": 0,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 5,
+          "guard_slow": 0,
+          "penalty_s": 0.0,
+          "limit_rank": null
+        },
+        {
+          "lap": 6,
+          "time": null,
+          "crash": 0,
+          "wall": 1,
+          "over": 0,
+          "recoveries": 2,
+          "guard_slow": 0,
+          "penalty_s": 8.1,
+          "limit_rank": null
+        }
+      ],
+      "has_details": true,
+      "finished": false,
+      "required": 6,
+      "penalty_s": 117.7,
+      "final_position": 1,
+      "blocked_by": "out of time: 118 s of penalties (3 kart, 3 wall), 24 recoveries, 1 lap still to run at 83 s best pace",
+      "laps": [
+        83.4,
+        110.4,
+        99.9,
+        112.1,
+        116.4
+      ],
+      "completed": 5,
+      "target": 6,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "fail",
+      "note": "First race.sh run after re-enabling the guard, and it confirms the guard is irrelevant in this scenario: 0 slow: cap and 0 EMERGENCY across the whole session while the car still took 3 kart and 3 wall contacts. AWSIM does not publish NPCs on /v2x/vehicle_positions, so there is nothing for the guard to see. Result 5/6 laps, 117.7 s of penalties, 24 recoveries, 0 MPC infeasible cycles. That sits inside the spread of the identical earlier runs (R59/R61/R62/R63: 189.8 / 191.8 / 98.6 / 217.6 s of penalties, 5/5/6/5 laps), so nothing here separates guard on from guard off — as expected, since race.sh cannot exercise the guard at all. To see the guard matter, use a scenario with ego-type opponents (parallel.sh / light3.sh) or fake_v2x_publisher.py.",
       "live": false
     }
   ]
