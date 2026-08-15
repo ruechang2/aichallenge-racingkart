@@ -81,25 +81,28 @@ def test_a_car_that_keeps_moving_never_triggers():
 # --- detection ---
 
 def test_wedged_against_a_wall_triggers_after_stuck_duration():
-    fsm = make()
+    cfg = RecoveryConfig()
+    fsm = StuckRecovery(cfg)
     arm(fsm)
-    # Creeping along the wall at 0.1 m/s: moving, but going nowhere.
-    t = drive(fsm, 0.0, 2.0, v=0.1)
+    # Creeping along the wall at 0.1 m/s: moving, but going nowhere. Timings are
+    # taken from the config, not written in, so retuning it does not fail this.
+    t = drive(fsm, 0.0, cfg.stuck_duration - 0.5, v=0.1)
     assert fsm.phase == IDLE, "must not fire before stuck_duration"
     t = until_phase(fsm, t, SHIFT_REVERSE, v=0.1)
-    assert t < 3.0
+    assert t < cfg.stuck_duration + 0.5
     assert fsm.attempts == 1
 
 
 def test_progress_resets_the_timer():
-    fsm = make()
+    cfg = RecoveryConfig()
+    fsm = StuckRecovery(cfg)
     arm(fsm)
-    t = 0.0
-    # Stuck for 2 s, then a 2 m lurch, then stuck for 2 s again: never 2.5 s
-    # without progress, so no recovery.
-    t = drive(fsm, t, 2.0, x=0.0)
+    # Stuck for just under stuck_duration, a 2 m lurch, then stuck again for the
+    # same: never a full window without progress, so no recovery.
+    hold = cfg.stuck_duration - 0.5
+    t = drive(fsm, 0.0, hold, x=0.0)
     fsm.update(t, 2.0, 0.0, 1.0, True, True, False)
-    drive(fsm, t, 2.0, x=2.0)
+    drive(fsm, t, hold, x=2.0)
     assert fsm.phase == IDLE
 
 
@@ -160,11 +163,12 @@ def test_blocked_rear_skips_the_reverse_half():
 
 
 def test_cooldown_prevents_immediate_retrigger():
-    fsm = make()
+    cfg = RecoveryConfig()
+    fsm = StuckRecovery(cfg)
     arm(fsm)
     t = until_phase(fsm, 0.0, COOLDOWN)
     # Still not moving, still asking to move: the cooldown must hold anyway.
-    t = drive(fsm, t, 2.0)
+    t = drive(fsm, t, cfg.cooldown - 0.5)
     assert fsm.phase == COOLDOWN
 
 

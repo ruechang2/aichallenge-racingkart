@@ -123,7 +123,7 @@ class RecoveryConfig:
     # "No progress" is the real test. A wedged kart can still creep along a wall
     # at 0.1 m/s, and a car spinning its wheels is moving without going anywhere.
     stuck_radius: float = 1.0
-    stuck_duration: float = 2.5
+    stuck_duration: float = 1.5
     # ...and only while the controller actually wants to move, so a commanded
     # stop is never mistaken for being stuck.
     intent_speed: float = 0.5
@@ -138,7 +138,7 @@ class RecoveryConfig:
     # Hand back to the controller as soon as the car is genuinely rolling; it
     # drives the line better than this node ever will.
     forward_release_speed: float = 2.0
-    cooldown: float = 3.0
+    cooldown: float = 1.5
 
     # --- giving up ---
     # Three, despite each retry landing inside AWSIM's ~12.2 s penalty union

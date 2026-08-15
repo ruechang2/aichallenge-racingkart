@@ -128,7 +128,7 @@
 
 <script type="application/json" id="run-data">
 {
-  "generated": "2026-08-15 18:30",
+  "generated": "2026-08-15 22:45",
   "target_laps": 5,
   "target_s": 40.0,
   "current": {
@@ -11052,6 +11052,117 @@
       "guard_slow": 0,
       "result": "partial",
       "note": "The mechanism worked and the trade still lost. Intended effect confirmed: every recovery logged attempt 1/1, gaps between attempts went from ~10.6 s to 22.6-23.7 s, and none of the 9 gaps fell inside AWSIM's ~12.2 s penalty union window (R67 had 10 of 23 inside it). Two of the four crash penalties came in at 10.8 and 10.0 s, i.e. the clean single-contact base of ~10.3 s. But the total did not improve -- 149.9 s of penalties, mid-range against the 98.6-217.6 s spread -- and the session managed only 4 laps, the worst of the six race.sh runs, with lap times 153.3 / 140.4 / 128.8 / 119.9 s against R67's 83.4 / 110.4 / 99.9 / 112.1 / 116.4. The retries were not just buying penalty seconds, they were getting the car free; replacing them with a 15 s wait costs more time than the ~12 s of penalty it saves. Reverted.",
+      "live": false
+    },
+    {
+      "id": "R69",
+      "time": "race NPC2 · faster recovery cycle",
+      "change": "stuck_duration 2.5->1.5 s, cooldown 3.0->1.5 s (shorten the recovery cycle)",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": true,
+      "recoveries": 16,
+      "lapdetail": [
+        {
+          "lap": 1,
+          "time": 93.0,
+          "crash": 1,
+          "wall": 2,
+          "over": 0,
+          "recoveries": 4,
+          "guard_slow": 0,
+          "penalty_s": 24.1,
+          "limit_rank": null
+        },
+        {
+          "lap": 2,
+          "time": 188.1,
+          "crash": 2,
+          "wall": 2,
+          "over": 0,
+          "recoveries": 12,
+          "guard_slow": 0,
+          "penalty_s": 110.0,
+          "limit_rank": null
+        },
+        {
+          "lap": 3,
+          "time": 49.8,
+          "crash": 0,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 0,
+          "guard_slow": 0,
+          "penalty_s": 0.0,
+          "limit_rank": null
+        },
+        {
+          "lap": 4,
+          "time": 49.8,
+          "crash": 0,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 0,
+          "guard_slow": 0,
+          "penalty_s": 0.0,
+          "limit_rank": null
+        },
+        {
+          "lap": 5,
+          "time": 49.7,
+          "crash": 0,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 0,
+          "guard_slow": 0,
+          "penalty_s": 0.0,
+          "limit_rank": null
+        },
+        {
+          "lap": 6,
+          "time": 49.6,
+          "crash": 0,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 0,
+          "guard_slow": 0,
+          "penalty_s": 0.0,
+          "limit_rank": null
+        }
+      ],
+      "has_details": true,
+      "finished": true,
+      "required": 6,
+      "penalty_s": 134.0,
+      "final_position": 1,
+      "blocked_by": null,
+      "laps": [
+        93.0,
+        188.1,
+        49.8,
+        49.8,
+        49.7,
+        49.6
+      ],
+      "completed": 6,
+      "target": 6,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "ok",
+      "note": "finished=true, 6/6 laps, 480 s of the 600. The direction came from R68: that run tested 'slower, cheaper penalties' (one attempt, 15 s wait) and lost 4 laps to 5, so time out of the race is worth more than the penalty seconds it buys. This is the opposite -- detect the jam a second sooner and get back to work sooner -- and it accepts more penalty as the price. It behaved as designed: 16 recoveries, penalties 134.0 s (mid-range), and once past the blocker the last four laps came in at 49.8 / 49.8 / 49.7 / 49.6 s, i.e. the handicapped clear-track pace with nothing left on the table. Note the run before this one was thrown away as contaminated: a leftover Autoware container from an earlier session was still on domain 1 and both stacks were commanding the same vehicle, which produced 72 over-speed penalties, 186 stuck detections and 3 laps. Always confirm no containers are running before trusting a result. One run, and the scenario's spread is wide (four earlier identical runs gave 98.6-217.6 s of penalties), so treat the completion as encouraging rather than settled.",
       "live": false
     }
   ]
