@@ -141,6 +141,9 @@ class RecoveryConfig:
     cooldown: float = 3.0
 
     # --- giving up ---
+    # Three, despite each retry landing inside AWSIM's ~12.2 s penalty union
+    # window: cutting to one was measured worse overall (dashboard R68), because
+    # the retries are also what frees the car. See the param file.
     max_attempts: int = 3
     give_up_cooldown: float = 10.0
     attempt_reset_distance: float = 15.0

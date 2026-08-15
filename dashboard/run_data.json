@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-13 22:27",
+  "generated": "2026-08-15 18:30",
   "target_laps": 5,
   "target_s": 40.0,
   "current": {
@@ -10825,6 +10825,104 @@
       "guard_slow": 0,
       "result": "fail",
       "note": "First race.sh run after re-enabling the guard, and it confirms the guard is irrelevant in this scenario: 0 slow: cap and 0 EMERGENCY across the whole session while the car still took 3 kart and 3 wall contacts. AWSIM does not publish NPCs on /v2x/vehicle_positions, so there is nothing for the guard to see. Result 5/6 laps, 117.7 s of penalties, 24 recoveries, 0 MPC infeasible cycles. That sits inside the spread of the identical earlier runs (R59/R61/R62/R63: 189.8 / 191.8 / 98.6 / 217.6 s of penalties, 5/5/6/5 laps), so nothing here separates guard on from guard off — as expected, since race.sh cannot exercise the guard at all. To see the guard matter, use a scenario with ego-type opponents (parallel.sh / light3.sh) or fake_v2x_publisher.py.",
+      "live": false
+    },
+    {
+      "id": "R68",
+      "time": "race NPC2 · max_attempts 1 (rejected)",
+      "change": "stuck_recovery max_attempts 3->1, give_up_cooldown 10->15 s, to stop retries extending the contact penalty",
+      "vmax": 45.0,
+      "amax": 3.0,
+      "amin": -4.5,
+      "ay": 19.0,
+      "q0": 200000.0,
+      "width": 1.7,
+      "margin": 0.85,
+      "steer": 0.6,
+      "avoid": false,
+      "traffic": false,
+      "profile": true,
+      "wp_off": 2.0,
+      "corners": "45/45/45",
+      "guard": "V2X on · scan off",
+      "recovery": true,
+      "recoveries": 18,
+      "lapdetail": [
+        {
+          "lap": 1,
+          "time": 153.3,
+          "crash": 1,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 5,
+          "guard_slow": 0,
+          "penalty_s": 34.3,
+          "limit_rank": null
+        },
+        {
+          "lap": 2,
+          "time": 140.4,
+          "crash": 2,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 4,
+          "guard_slow": 0,
+          "penalty_s": 77.2,
+          "limit_rank": null
+        },
+        {
+          "lap": 3,
+          "time": 128.8,
+          "crash": 1,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 4,
+          "guard_slow": 0,
+          "penalty_s": 10.0,
+          "limit_rank": null
+        },
+        {
+          "lap": 4,
+          "time": 119.9,
+          "crash": 0,
+          "wall": 2,
+          "over": 0,
+          "recoveries": 4,
+          "guard_slow": 0,
+          "penalty_s": 28.5,
+          "limit_rank": null
+        },
+        {
+          "lap": 5,
+          "time": null,
+          "crash": 0,
+          "wall": 0,
+          "over": 0,
+          "recoveries": 1,
+          "guard_slow": 0,
+          "penalty_s": 0.0,
+          "limit_rank": null
+        }
+      ],
+      "has_details": true,
+      "finished": false,
+      "required": 6,
+      "penalty_s": 149.9,
+      "final_position": 1,
+      "blocked_by": "out of time: 150 s of penalties (4 kart, 2 wall), 18 recoveries, 2 laps still to run at 120 s best pace",
+      "laps": [
+        153.3,
+        140.4,
+        128.8,
+        119.9
+      ],
+      "completed": 4,
+      "target": 6,
+      "collisions": null,
+      "guard_emergency": 0,
+      "guard_slow": 0,
+      "result": "partial",
+      "note": "The mechanism worked and the trade still lost. Intended effect confirmed: every recovery logged attempt 1/1, gaps between attempts went from ~10.6 s to 22.6-23.7 s, and none of the 9 gaps fell inside AWSIM's ~12.2 s penalty union window (R67 had 10 of 23 inside it). Two of the four crash penalties came in at 10.8 and 10.0 s, i.e. the clean single-contact base of ~10.3 s. But the total did not improve -- 149.9 s of penalties, mid-range against the 98.6-217.6 s spread -- and the session managed only 4 laps, the worst of the six race.sh runs, with lap times 153.3 / 140.4 / 128.8 / 119.9 s against R67's 83.4 / 110.4 / 99.9 / 112.1 / 116.4. The retries were not just buying penalty seconds, they were getting the car free; replacing them with a 15 s wait costs more time than the ~12 s of penalty it saves. Reverted.",
       "live": false
     }
   ]

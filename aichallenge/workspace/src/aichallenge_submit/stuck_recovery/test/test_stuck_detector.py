@@ -190,6 +190,28 @@ def test_attempts_stop_after_the_limit_and_resume_later():
     assert fsm.attempts == 0, "the count is cleared, so a later incident is tried again"
 
 
+# AWSIM adds ~12.2 s to a live contact penalty for every further contact, so a
+# retry inside that window is charged as an extension of the expensive event
+# rather than a cheap new one. Measured across 35 penalty events.
+PENALTY_UNION_WINDOW_S = 12.2
+
+
+def test_retries_are_known_to_land_inside_the_penalty_window():
+    """Documents a trade that was measured, not an invariant to preserve.
+
+    Each retry follows the last by roughly reverse + forward + cooldown +
+    stuck_duration, which is under AWSIM's penalty union window, so a re-contact
+    extends the current penalty instead of starting a cheap new one. Cutting to a
+    single attempt fixed that and still lost on lap time (dashboard R68): the
+    retries are also what frees the car. Kept at three deliberately.
+    """
+    cfg = RecoveryConfig()
+    assert cfg.max_attempts == 3
+    cycle = cfg.reverse_timeout + cfg.forward_duration + cfg.cooldown + cfg.stuck_duration
+    assert cycle < PENALTY_UNION_WINDOW_S + 3.0, \
+        "if this ever grows past the window, revisit R68 — the trade may flip"
+
+
 def test_driving_away_clears_the_attempt_count():
     fsm = make()
     arm(fsm)

@@ -44,6 +44,19 @@
     # Repeated attempts against the same obstacle are a sign the manoeuvre is not
     # the answer (e.g. a kart parked on the line). Back off and let the controller
     # try for a while rather than shuttling back and forth forever.
+    #
+    # TRIED AND REJECTED 2026-08-15: max_attempts 1 with a 15 s give-up cooldown.
+    # The reasoning was sound and the measurement killed it. AWSIM charges ~10.3 s
+    # for a contact and ~12.2 s for every further contact while that penalty is
+    # still running (35 events cluster at 10.3 / 22.5 / 34.8 / 47, residual
+    # < 1.5 s), and the 3-attempt cycle retried every ~10.6 s — inside that window,
+    # so retries extended the expensive penalty instead of starting cheap ones.
+    # One attempt did exactly what it promised: gaps went to 22.6-23.7 s, none
+    # inside the window, and two crash penalties came in at the clean ~10 s base.
+    # It still lost: 4 laps (worst of six runs) and 149.9 s of penalties, with lap
+    # times 153/140/129/120 s against 83/110/100/112/116. The retries were also
+    # what got the car FREE; a 15 s wait costs more than the 12 s it saves. See
+    # dashboard R68.
     max_attempts: 3
     give_up_cooldown: 10.0   # [s] cooldown after the attempt limit is hit
     attempt_reset_distance: 15.0  # [m] driving this far clears the attempt count
