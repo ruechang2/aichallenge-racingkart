@@ -1,0 +1,34 @@
+/**:
+  ros__parameters:
+    enable_avoidance: true
+
+    # --- geometry of a pass ---
+    # Two 1.45 m karts side by side need ~1.5 m between centrelines; 1.6 m adds a
+    # little for localisation error.
+    pass_clearance: 1.6      # [m] lateral gap aimed for when passing
+    # How far off the racing line we will run to get it. This is the guard rail
+    # against what killed the MPC's own avoidance: it swerved to 2.0-2.3 m and
+    # stranded the car on the track edge, which with wall-recovery off is
+    # terminal. If neither side fits inside this, no bias is emitted at all and
+    # collision_guard slows for the kart instead.
+    max_offset: 1.6          # [m] maximum excursion from the racing line
+    preview_distance: 12.0   # [m] look this far ahead for a kart to pass
+    # 0.5 m, not 3.0. Three metres blinded the node exactly when it was needed:
+    # measured, the guard closes to 0.73 m behind a stationary kart and holds
+    # there, so with a 3 m floor the avoidance engaged once at 4.5 m and then
+    # went quiet for the remaining 600 s (0 laps, 603 speed caps). Steering while
+    # stopped is not wasted either — below curvature_min_speed the guard derives
+    # its corridor from the COMMANDED steering, so a bias here rotates the
+    # corridor off the kart and releases the guard's own cap.
+    min_preview_distance: 0.5  # [m] below this the geometry stops being meaningful
+    corridor_half_width: 1.2 # [m] karts wider than this + pass_clearance are already clear
+
+    # --- command conversion ---
+    # steering_tire_angle carries kappa * gain, NOT an angle. Do not apply
+    # tan()/wheel_base to it; see lateral_avoidance/avoidance.py.
+    steering_tire_angle_gain: 1.639
+    max_curvature_bias: 0.25 # [1/m] authority limit, well inside the 0.58 full lock
+    bias_rate: 0.05          # [command/cycle] ramp, so a flickering kart cannot shake the wheel
+
+    self_ignore_radius: 1.5  # [m] V2X points this close to ego are ego
+    sensor_stale_sec: 0.5    # [s] drop sensor data older than this

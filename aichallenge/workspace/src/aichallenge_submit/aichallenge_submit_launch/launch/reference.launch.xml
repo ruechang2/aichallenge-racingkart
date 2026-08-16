@@ -45,6 +45,21 @@
        rather than the only response; see stuck_recovery/README and the corridor
        note on use_obstacle_avoidance above. -->
   <arg name="use_collision_guard" default="true" description="longitudinal AEB / speed cap"/>
+  <!-- Steer around a kart ahead rather than queueing behind it. Runs upstream of
+       the guard, so turning away takes the kart out of the guard's arc corridor
+       and releases its speed cap without the two nodes coordinating. It refuses
+       to move further than max_offset from the racing line — the bound the MPC's
+       own avoidance lacked when it stranded the car on the edge.
+
+       DEFAULT OFF: it works, and it is not yet worth shipping. Measured against
+       a 20 km/h kart with a control run (lateral_avoidance/README.md): guard
+       interventions fall 58.0 -> 34.0 per lap, but the median lap is 62.7 s
+       either way, and emergencies and recoveries both go UP. The car still runs
+       at the blocker's pace. Cause is structural — biasing the command cannot
+       hold a lateral offset against an MPC that is feedback-tracking the racing
+       line; the reference has to move instead. Turn on with
+       use_lateral_avoidance:=true for that work. -->
+  <arg name="use_lateral_avoidance" default="false" description="steer around karts (V2X)"/>
   <!-- Automatic recovery from a stuck vehicle: back out of the wall (or the kart
        we rear-ended), turn the nose back onto the racing line, and drive on.
        AWSIM's own wall recovery is OFF in the official evaluation, so without
@@ -191,6 +206,7 @@
       <arg name="track" value="$(var track)"/>
       <arg name="use_obstacle_avoidance" value="$(var use_obstacle_avoidance)"/>
       <arg name="use_collision_guard" value="$(var use_collision_guard)"/>
+      <arg name="use_lateral_avoidance" value="$(var use_lateral_avoidance)"/>
       <arg name="use_stuck_recovery" value="$(var use_stuck_recovery)"/>
     </include>
   </group>

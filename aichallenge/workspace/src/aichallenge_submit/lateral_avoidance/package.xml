@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>lateral_avoidance</name>
+  <version>0.1.0</version>
+  <description>
+    Steers around a kart ahead instead of queueing behind it. Sits before
+    collision_guard, so that turning away takes the kart out of the guard's
+    corridor and releases its speed cap without the two nodes talking. Refuses
+    to avoid when neither side has room, leaving the guard to slow down.
+  </description>
+  <maintainer email="i.kota2015@gmail.com">aichallenge</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>autoware_auto_control_msgs</depend>
+  <depend>autoware_auto_planning_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>v2x_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

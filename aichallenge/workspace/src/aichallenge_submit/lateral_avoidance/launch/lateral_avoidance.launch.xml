@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="param_file" default="$(find-pkg-share lateral_avoidance)/config/lateral_avoidance.param.yaml"/>
+  <arg name="input_cmd_topic" default="/control/command/control_cmd_mpc"/>
+  <arg name="output_cmd_topic" default="/control/command/control_cmd_avoided"/>
+
+  <node pkg="lateral_avoidance" exec="lateral_avoidance_node" name="lateral_avoidance" output="screen">
+    <param from="$(var param_file)"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+    <remap from="~/input/control_cmd" to="$(var input_cmd_topic)"/>
+    <remap from="~/output/control_cmd" to="$(var output_cmd_topic)"/>
+  </node>
+</launch>

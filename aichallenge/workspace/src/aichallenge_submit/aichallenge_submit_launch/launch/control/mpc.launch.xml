@@ -25,18 +25,28 @@
        wall recovery is off in the official evaluation, so without this a single
        contact ends the session beached at 0 m/s. See stuck_recovery/README.md. -->
   <arg name="use_stuck_recovery" default="true"/>
+  <!-- Steer around a kart ahead instead of queueing behind it. Placed BEFORE the
+       guard so that turning away takes the kart out of the guard's arc corridor
+       and releases its speed cap by itself. See lateral_avoidance/README.md. -->
+  <arg name="use_lateral_avoidance" default="false"/>
 
   <!-- Command chain, built from whichever filters are enabled:
-         MPC  ->  collision_guard  ->  stuck_recovery  ->  vehicle
-       Each disabled stage simply drops out and the topics shorten. The recovery
-       is deliberately LAST: while it backs the car out of a wall, the guard
-       would otherwise brake for the very obstacle being escaped. -->
+         MPC -> lateral_avoidance -> collision_guard -> stuck_recovery -> vehicle
+       Each disabled stage simply drops out and the topics shorten. Order is not
+       arbitrary: avoidance goes FIRST so the guard sees the line we intend to
+       take rather than braking for a kart we are already turning away from, and
+       the recovery goes LAST because while it backs the car out of a wall the
+       guard would otherwise brake for the very obstacle being escaped. -->
   <let name="mpc_out_topic"
-       value="$(eval &quot;'/control/command/control_cmd_mpc' if '$(var use_collision_guard)' == 'true' or '$(var use_stuck_recovery)' == 'true' else '/control/command/control_cmd'&quot;)"/>
+       value="$(eval &quot;'/control/command/control_cmd_mpc' if '$(var use_lateral_avoidance)' == 'true' or '$(var use_collision_guard)' == 'true' or '$(var use_stuck_recovery)' == 'true' else '/control/command/control_cmd'&quot;)"/>
+  <let name="avoid_out_topic"
+       value="$(eval &quot;'/control/command/control_cmd_avoided' if '$(var use_collision_guard)' == 'true' or '$(var use_stuck_recovery)' == 'true' else '/control/command/control_cmd'&quot;)"/>
+  <let name="guard_in_topic"
+       value="$(eval &quot;'$(var avoid_out_topic)' if '$(var use_lateral_avoidance)' == 'true' else '$(var mpc_out_topic)'&quot;)"/>
   <let name="guard_out_topic"
        value="$(eval &quot;'/control/command/control_cmd_guarded' if '$(var use_stuck_recovery)' == 'true' else '/control/command/control_cmd'&quot;)"/>
   <let name="recovery_in_topic"
-       value="$(eval &quot;'$(var guard_out_topic)' if '$(var use_collision_guard)' == 'true' else '$(var mpc_out_topic)'&quot;)"/>
+       value="$(eval &quot;'$(var guard_out_topic)' if '$(var use_collision_guard)' == 'true' else '$(var guard_in_topic)'&quot;)"/>
 
   <!-- Boost mode: the guard is bypassed. It is a Python node and cannot republish at
        1700 Hz, so putting it in the path would both throttle the boost and lag the
@@ -72,10 +82,18 @@
       <remap from="/control/command/control_cmd" to="$(var mpc_out_topic)"/>
     </node>
 
+    <group if="$(var use_lateral_avoidance)">
+      <include file="$(find-pkg-share lateral_avoidance)/launch/lateral_avoidance.launch.xml">
+        <arg name="use_sim_time" value="$(var use_sim_time)"/>
+        <arg name="input_cmd_topic" value="$(var mpc_out_topic)"/>
+        <arg name="output_cmd_topic" value="$(var avoid_out_topic)"/>
+      </include>
+    </group>
+
     <group if="$(var use_collision_guard)">
       <include file="$(find-pkg-share collision_guard)/launch/collision_guard.launch.xml">
         <arg name="use_sim_time" value="$(var use_sim_time)"/>
-        <arg name="input_cmd_topic" value="$(var mpc_out_topic)"/>
+        <arg name="input_cmd_topic" value="$(var guard_in_topic)"/>
         <arg name="output_cmd_topic" value="$(var guard_out_topic)"/>
         <arg name="use_scan_wall" value="$(var use_scan_wall)"/>
       </include>
