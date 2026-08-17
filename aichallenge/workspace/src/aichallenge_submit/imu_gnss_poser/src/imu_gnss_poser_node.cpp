@@ -230,11 +230,26 @@ private:
       last_gnss_ = msg;
     }
 
-    // Publish initial_pose3d until EKF is triggered (same msg as pub_pose_)
+    // Seed the EKF, giving it the raceline heading rather than the GNSS/IMU
+    // orientation above: the GNSS pose carries no usable yaw and the IMU is not
+    // north-referenced, so seeding from it starts the filter at yaw 0 while the car
+    // actually points down the track. The MPC then sees the full heading error (127
+    // deg on the citycircuit grid), commands full steering lock, and drives off the
+    // grid into the wall within 2.5 s of the start — 0 laps, whatever the tune.
+    //
+    // The raceline yaw is also what /set_initial_pose applies, but that is a one-shot
+    // call from autostart_orchestrator that fails outright ("no GNSS data received
+    // yet") when it fires before the first GNSS sample — which is exactly what
+    // happens whenever AWSIM boots slowly, e.g. with the other karts on the grid.
+    // Here GNSS is by definition already available, so this cannot lose that race.
     if (!ekf_triggered_) {
-      pub_initial_pose_3d_->publish(*msg);
+      auto initial_pose = *msg;
+      const bool raceline_yaw = try_apply_raceline_yaw(initial_pose);
+      pub_initial_pose_3d_->publish(initial_pose);
       if (!initial_pose_published_) {
-        RCLCPP_INFO(get_logger(), "Publishing initial_pose3d");
+        RCLCPP_INFO(
+          get_logger(), "Publishing initial_pose3d (yaw from %s)",
+          raceline_yaw ? "raceline" : "GNSS/IMU");
         initial_pose_published_ = true;
       }
       try_trigger_ekf();
