@@ -23,25 +23,38 @@ class ScanControlSequenceDataset(Dataset):
         accels (np.ndarray): Acceleration array (N,).
     """
 
-    def __init__(self, seq_dir: Union[str, Path], max_range: float = 30.0):
+    def __init__(self, seq_dir: Union[str, Path], max_range: float = 30.0, n_frames: int = 1,
+                 target_mode: str = "accel", max_speed: float = 8.34):
         """
         Initializes the dataset from a sequence directory.
 
         Args:
             seq_dir: Path to the directory containing .npy files.
             max_range: Maximum range value to normalize LiDAR data (0.0 to 1.0).
+            n_frames: Number of consecutive scans to stack along the channel axis.
+                1 keeps the original single-frame behaviour.
+            target_mode: "accel" trains on the raw acceleration command; "speed"
+                trains on the commanded target speed normalized by max_speed.
+                加速度は最大加速と急制動の二値に張り付くため回帰が収束しにくい。
+                目標速度はコーナー手前でなめらかに落ちるので学習しやすい。
+            max_speed: Normalization constant for target_mode="speed" [m/s].
 
         Raises:
             ValueError: If data lengths do not match or files are missing.
         """
         self.seq_dir = Path(seq_dir)
         self.max_range = max_range
+        self.n_frames = n_frames
+        self.target_mode = target_mode
+        self.max_speed = max_speed
 
         try:
             # Load raw data
             self.scans = np.load(self.seq_dir / "scans.npy")         # Shape: (N, num_points)
             self.steers = np.load(self.seq_dir / "steers.npy")       # Shape: (N,)
             self.accels = np.load(self.seq_dir / "accelerations.npy") # Shape: (N,)
+            if self.target_mode == "speed":
+                self.speeds = np.load(self.seq_dir / "speeds.npy")   # Shape: (N,)
         except FileNotFoundError as e:
             raise FileNotFoundError(f"Missing required .npy files in {self.seq_dir}: {e}")
 
@@ -57,8 +70,23 @@ class ScanControlSequenceDataset(Dataset):
         # Values are clipped to [0, max_range] and then scaled to [0, 1]
         self.scans = np.clip(self.scans, 0.0, self.max_range) / self.max_range
 
+        # 学習に使うサンプルの選択。extract 側が valid.npy（停止区間を False）を
+        # 出していればそれに従う。行は残っているので、過去フレームのスタックは
+        # 止まっている間のスキャンも含めて時間どおりに参照できる。
+        valid_path = self.seq_dir / "valid.npy"
+        if valid_path.exists():
+            valid = np.load(valid_path).astype(bool)
+            if len(valid) != n_samples:
+                raise ValueError(f"valid.npy length mismatch in {self.seq_dir}: {len(valid)} vs {n_samples}")
+            self.index = np.flatnonzero(valid)
+            dropped = n_samples - len(self.index)
+            if dropped:
+                logger.info(f"{self.seq_dir.name}: using {len(self.index)}/{n_samples} samples ({dropped} stopped)")
+        else:
+            self.index = np.arange(n_samples)
+
     def __len__(self) -> int:
-        return len(self.scans)
+        return len(self.index)
 
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -68,17 +96,26 @@ class ScanControlSequenceDataset(Dataset):
             idx: Index of the sample to retrieve.
 
         Returns:
-            scan: Normalized LiDAR scan data (float32).
+            scan: Normalized LiDAR scans of shape (n_frames, num_points), oldest
+                first. Near the start of a sequence the oldest frame is repeated,
+                so the model always sees a fixed number of channels.
             target: Control command vector [acceleration, steering] (float32).
         """
-        # Ensure data is float32 for PyTorch compatibility
-        scan = self.scans[idx].astype(np.float32)
+        idx = int(self.index[idx])
+        # 過去 n_frames 分を古い順に並べる。系列の先頭では過去が足りないので
+        # 先頭フレームを繰り返して埋める（系列をまたいで参照しない）。
+        frame_ids = np.clip(np.arange(idx - self.n_frames + 1, idx + 1), 0, None)
+        scan = self.scans[frame_ids].astype(np.float32)
         
-        accel = np.float32(self.accels[idx])
         steer = np.float32(self.steers[idx])
-        
-        # Target vector construction: [Acceleration, Steering]
-        target = np.array([accel, steer], dtype=np.float32)
+
+        # Target vector construction: [longitudinal, Steering]
+        # longitudinal は target_mode で中身が変わる（加速度 or 正規化した目標速度）。
+        if self.target_mode == "speed":
+            longitudinal = np.float32(self.speeds[idx] / self.max_speed)
+        else:
+            longitudinal = np.float32(self.accels[idx])
+        target = np.array([longitudinal, steer], dtype=np.float32)
         
         return scan, target
 
@@ -96,7 +133,10 @@ class MultiSeqConcatDataset(ConcatDataset):
         dataset_root: Union[str, Path], 
         max_range: float = 30.0, 
         include: Optional[List[str]] = None, 
-        exclude: Optional[List[str]] = None
+        exclude: Optional[List[str]] = None,
+        n_frames: int = 1,
+        target_mode: str = "accel",
+        max_speed: float = 8.34
     ):
         """
         Initializes the concatenated dataset.
@@ -108,6 +148,7 @@ class MultiSeqConcatDataset(ConcatDataset):
                      at least one of these substrings will be loaded.
             exclude: List of substrings; directories containing any of these
                      substrings will be skipped.
+            n_frames: Number of consecutive scans to stack along the channel axis.
 
         Raises:
             RuntimeError: If no valid sequences are found after filtering.
@@ -137,9 +178,13 @@ class MultiSeqConcatDataset(ConcatDataset):
         for seq_dir in target_seq_dirs:
             # Quick check for file existence before initialization
             required_files = ["scans.npy", "steers.npy", "accelerations.npy"]
+            if target_mode == "speed":
+                required_files = required_files + ["speeds.npy"]
             if all((seq_dir / f).exists() for f in required_files):
                 try:
-                    ds = ScanControlSequenceDataset(seq_dir, max_range=max_range)
+                    ds = ScanControlSequenceDataset(
+                        seq_dir, max_range=max_range, n_frames=n_frames,
+                        target_mode=target_mode, max_speed=max_speed)
                     datasets.append(ds)
                 except Exception as e:
                     logger.warning(f"Failed to load sequence {seq_dir}: {e}")

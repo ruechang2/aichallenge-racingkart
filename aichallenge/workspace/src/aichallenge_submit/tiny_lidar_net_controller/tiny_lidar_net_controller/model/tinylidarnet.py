@@ -167,15 +167,18 @@ class TinyLidarNetNp:
         shapes (dict): Stores parameter shapes for initialization.
     """
 
-    def __init__(self, input_dim=1080, output_dim=2):
+    def __init__(self, input_dim=1080, output_dim=2, in_channels=1):
         """Initializes TinyLidarNetNp.
 
         Args:
             input_dim (int): The size of the input LiDAR scan array. Defaults to 1080.
             output_dim (int): The size of the output prediction. Defaults to 2.
+            in_channels (int): Number of stacked LiDAR frames fed to the network.
+                Must match the value used at training time. Defaults to 1.
         """
         self.input_dim = input_dim
         self.output_dim = output_dim
+        self.in_channels = in_channels
         self.params = {}
 
         # Stride definitions
@@ -183,7 +186,7 @@ class TinyLidarNetNp:
 
         # Shape definitions matching PyTorch
         self.shapes = {
-            'conv1_weight': (24, 1, 10),  'conv1_bias': (24,),
+            'conv1_weight': (24, in_channels, 10),  'conv1_bias': (24,),
             'conv2_weight': (36, 24, 8),  'conv2_bias': (36,),
             'conv3_weight': (48, 36, 4),  'conv3_bias': (48,),
             'conv4_weight': (64, 48, 3),  'conv4_bias': (64,),
@@ -223,7 +226,7 @@ class TinyLidarNetNp:
         """Performs the forward pass of the model.
 
         Args:
-            x (np.ndarray): Input array of shape (batch_size, 1, input_dim).
+            x (np.ndarray): Input array of shape (batch_size, in_channels, input_dim).
 
         Returns:
             np.ndarray: Output array of shape (batch_size, output_dim).
@@ -247,7 +250,7 @@ class TinyLidarNetSmallNp:
     architecture of the PyTorch `TinyLidarNetSmall` class.
     """
 
-    def __init__(self, input_dim=1080, output_dim=2):
+    def __init__(self, input_dim=1080, output_dim=2, in_channels=1):
         """Initializes TinyLidarNetSmallNp.
 
         Args:
@@ -256,11 +259,12 @@ class TinyLidarNetSmallNp:
         """
         self.input_dim = input_dim
         self.output_dim = output_dim
+        self.in_channels = in_channels
         self.params = {}
         self.strides = {'conv1': 4, 'conv2': 4, 'conv3': 2}
 
         self.shapes = {
-            'conv1_weight': (24, 1, 10),  'conv1_bias': (24,),
+            'conv1_weight': (24, in_channels, 10),  'conv1_bias': (24,),
             'conv2_weight': (36, 24, 8),  'conv2_bias': (36,),
             'conv3_weight': (48, 36, 4),  'conv3_bias': (48,),
         }
@@ -297,7 +301,7 @@ class TinyLidarNetSmallNp:
         """Performs the forward pass of the model.
 
         Args:
-            x (np.ndarray): Input array of shape (batch_size, 1, input_dim).
+            x (np.ndarray): Input array of shape (batch_size, in_channels, input_dim).
 
         Returns:
             np.ndarray: Output array of shape (batch_size, output_dim).

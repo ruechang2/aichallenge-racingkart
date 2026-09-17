@@ -6,10 +6,77 @@
       input_dim: 750            # LiDARスキャンの入力次元
       output_dim: 2              # 出力（steering, throttleなど）
       architecture: "normal"      # "normal" または "small"
+      n_frames: 4                # LiDARを何フレーム分チャネル方向に重ねるか（学習時と一致させる）
       ckpt_path: "/path/to/tinylidarnet_weights.npy"
 
     max_range: 30.0              # LiDARの最大レンジ（メートル）
-    control_mode: "fixed"          # "ai" または "fixed"
+    control_mode: "speed"          # "ai" / "fixed" / "speed"
+                                   #   speed: モデルが出す目標速度を比例制御で加速度に変換
+    max_speed: 8.34                # m/s。学習時の data.max_speed と一致させる
+    speed_kp: 1.0                  # 目標速度と現在速度の差 → 加速度 のゲイン
     acceleration: 0.6            # 固定加速度コマンド mode:fixed の場合に使用
 
     debug: false
+
+    # 壁・カートへの衝突検知。検知しても直接は介入せず、下の recovery に通知して
+    # 復帰を早く始めさせるだけ。入力は 2 系統あり、上が来ていればそちらを優先する。
+    #   1. 車両ダメージ Condition（衝突で増え、修理で減る）の増加
+    #   2. 車輪速の急減速と LiDAR の前方距離からの推定
+    # 手元の AWSIM は 1 の topic を publish しないため（アセンブリに topic 名の
+    # 文字列が無く、レース中も Publisher count は 0）、実際には 2 が働く。
+    # 1 が来ないときは起動 15 秒後に警告を 1 度出す。
+    collision:
+      enabled: true
+      condition_topic: "/aichallenge/pitstop/condition"
+      damage_threshold: 30       # この量だけダメージが増えたら衝突とみなす
+                                 #   multi_purpose_mpc_ros のサンプルと同じ値
+      damage_window: 1.0         # 増加量を見る時間窓 [s]
+                                 #   擦り続けて少しずつ増える場合を拾うためのもの
+      decel_threshold: 4.0       # これを超える減速度を衝突とみなす [m/s^2]
+                                 #   制動で出せるのは 2.0 程度なので十分大きくとる
+      min_impact_speed: 1.0      # 急減速判定に必要な衝突直前の速度 [m/s]
+      contact_range: 0.8         # 前方がこの距離以下なら接触とみなす [m]
+                                 #   LiDAR は車体前端のほぼ真上にある
+      contact_speed: 0.5         # 接触判定に必要な速度の上限 [m/s]
+      contact_duration: 0.5      # 接触とみなすまでの継続時間 [s]
+      refractory_duration: 1.5   # 1 回の衝突で連続発火させないための不感時間 [s]
+      missing_topic_warn_sec: 15.0  # topic が来ないことを警告するまでの時間 [s]
+
+    # スタック復帰。通常走行では介入せず、詰んだときだけ NN の出力を上書きする。
+    # LiDAR は前方 180 度しか見えないため、まず前進で脱出を試し、
+    # 駄目なときだけ一定時間待ってから短く後退する（後方は観測できないため）。
+    recovery:
+      enabled: true
+      stuck_speed: 0.5           # これを下回る速度が続いたらスタック候補 [m/s]
+      stuck_duration: 2.0        # スタック判定までの継続時間 [s]
+      collision_stuck_duration: 0.5  # 衝突直後のスタック判定までの継続時間 [s]
+                                     #   ぶつかったことは分かっているので短くてよい
+      collision_window: 3.0      # 衝突を「直後」とみなす時間 [s]
+      release_speed: 0.8         # 復帰成功とみなす速度 [m/s]
+                                 #   実走での脱出後の到達速度は 0.84〜0.96。
+                                 #   1.0 では判定に届かず 3 往復を使い切っていた
+      forward_duration: 1.5      # 前進脱出を試す時間 [s]
+      forward_attempts: 2        # 後退に移る前に前進を試す回数
+      forward_attempts_when_blocked: 1  # 前方が詰まっているときの前進試行回数
+                                        #   壁に正面から刺さったら押しても抜けない
+      front_blocked_range: 1.2   # 前方がこの距離以下なら詰まっているとみなす [m]
+      rear_wait_duration: 2.0    # 後退前の待機 [s]。後続の通過を時間で代替する
+      reverse_duration: 2.0      # 後退する時間 [s]
+      # REVERSE ギアで加速度指令のどちらの符号が後退になるかはシミュレータ側の
+      # 解釈次第（シフト方向への加速なら正、車体前方を正とする符号付きなら負）。
+      # 決め打ちで外すとギアだけ REVERSE になって壁を押し続けるので、
+      # 動かなければ符号を反転して試し、動いた符号を覚える。
+      reverse_probe_duration: 1.0  # 動いたかを見るまでの時間 [s]
+      reverse_move_speed: 0.15     # 後退できたとみなす速度 [m/s]
+      max_escape_cycles: 3         # 前進と後退を往復する回数の上限
+      cooldown_duration: 2.0     # 復帰後、再発火を抑える時間 [s]
+      # 脱出直後に NN へ返す前、空いている側へ寄せて進む時間 [s]。即返すと止まっている
+      # 相手のいる同じラインへ戻ってまた刺さる（実測: 同じ地点で 19 回繰り返した）。
+      sidestep_duration: 2.5
+      sidestep_steer_gain: 0.5   # 脱出時の操舵角に掛ける倍率
+      # 車両の転がり抵抗は 0.37 m/s^2 で、指令からこれを引いた分でしか加速しない。
+      # レース中の上限 0.7 では正味 0.33 m/s^2 しか残らず、1.5 秒かけても
+      # 0.5 m/s にしかならない（＝脱出したと判定できない）。脱出は速度ではなく
+      # 「動き出すこと」が目的なので、走行時の上限より大きくとる。
+      forward_accel: 1.2         # 前進脱出時の加速度 [m/s^2]
+      reverse_accel: 1.2         # 後退時の加速度 [m/s^2]

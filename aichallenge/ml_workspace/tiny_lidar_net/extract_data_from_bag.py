@@ -19,6 +19,14 @@ class ExtractionConfig:
     control_msg_type: str = 'autoware_auto_control_msgs/msg/AckermannControlCommand'
     scan_msg_type: str = 'sensor_msgs/msg/LaserScan'
     max_scan_range: float = 30.0
+    # 実車速。これを下回るサンプルは学習から外す（valid.npy に False で記録）。
+    # 教師（MPC）が他車に詰まって止まっている間の操舵は、走るための手本ではない。
+    # topic が bag に無い（単独走行の旧 bag）ときは全サンプル有効。
+    velocity_topic: str = '/vehicle/status/velocity_status'
+    velocity_msg_type: str = 'autoware_auto_vehicle_msgs/msg/VelocityReport'
+    min_speed: float = 0.5
+    stuck_cmd_speed: float = 1.0   # 止まっているのに指令速度がこれ以上なら「詰まり」
+    waiting_stride: int = 5        # 意図した停止（前車待ち）は何枚に 1 枚残すか
 
 
 def worker_init(debug_mode: bool) -> None:
@@ -141,12 +149,14 @@ def process_bag(
     cmd_times: List[int] = []
     scan_data: List[np.ndarray] = []
     scan_times: List[int] = []
+    vel_data: List[float] = []
+    vel_times: List[int] = []
 
     # --- 1. Read Bag File ---
     t_start_read = time.perf_counter()
     try:
         with AnyReader([bag_path]) as reader:
-            target_topics = [config.control_topic, config.scan_topic]
+            target_topics = [config.control_topic, config.scan_topic, config.velocity_topic]
             connections = [c for c in reader.connections if c.topic in target_topics]
             
             if not connections:
@@ -162,7 +172,10 @@ def process_bag(
                         if conn.msgtype == config.control_msg_type:
                             accel = msg.longitudinal.acceleration
                             steer = msg.lateral.steering_tire_angle
-                            cmd_data.append([steer, accel])
+                            # 目標速度も保存する。加速度は最大値と急制動の二値に張り付いて
+                            # 回帰しづらいが、速度はコーナー手前でなめらかに落ちるため学習しやすい。
+                            speed = msg.longitudinal.speed
+                            cmd_data.append([steer, accel, speed])
                             cmd_times.append(timestamp)
                     
                     # Extract LiDAR Scan
@@ -172,6 +185,12 @@ def process_bag(
                             scan_vec = clean_scan_array(ranges, config.max_scan_range)
                             scan_data.append(scan_vec)
                             scan_times.append(timestamp)
+
+                    # Extract actual vehicle speed (for the stopped-sample mask)
+                    elif conn.topic == config.velocity_topic:
+                        if conn.msgtype == config.velocity_msg_type:
+                            vel_data.append(float(msg.longitudinal_velocity))
+                            vel_times.append(timestamp)
                 except Exception:
                     continue
     except Exception as e:
@@ -203,7 +222,33 @@ def process_bag(
     synced_cmds = np_cmd_data[indices]
     synced_steers = synced_cmds[:, 0]
     synced_accels = synced_cmds[:, 1]
-    
+    synced_speeds = synced_cmds[:, 2]
+
+    # 停止区間のマスク。実車速が min_speed 未満のスキャンは valid=False。
+    # 行は削らない（n_frames のスタックで時間の連続性が要るため）。読み込み側で
+    # valid のインデックスだけを学習に使う。
+    valid = np.ones(len(np_scan_times), dtype=bool)
+    if vel_data:
+        np_vel = np.array(vel_data, dtype=np.float32)
+        np_vel_times = np.array(vel_times, dtype=np.int64)
+        v_sort = np.argsort(np_vel_times)
+        v_idx, _ = synchronize_data(np_scan_times, np_vel_times[v_sort])
+        actual_speed = np_vel[v_sort][v_idx]
+        stopped = actual_speed < config.min_speed
+        # 止まっている理由で分ける。
+        #   詰まり: 指令は「進め」なのに動いていない（壁・他車に押し付けている）→ 外す
+        #   意図した停止: 指令速度も低い（前の車の後ろで待っている）→ 手本として残す。
+        #       ただし同じ場面が何百枚も並ぶので stride で間引く。
+        stuck = stopped & (synced_speeds > config.stuck_cmd_speed)
+        waiting = stopped & ~stuck
+        valid = ~stopped
+        keep_idx = np.flatnonzero(waiting)[::max(int(config.waiting_stride), 1)]
+        valid[keep_idx] = True
+        logger.info(f"{bag_name}: {len(valid)} samples; stuck masked out {int(stuck.sum())}, "
+                    f"waiting {int(waiting.sum())} -> kept {len(keep_idx)} (stride {config.waiting_stride})")
+    else:
+        logger.info(f"{bag_name}: no {config.velocity_topic} in bag; all samples kept")
+
     t_end_sync = time.perf_counter()
 
     # --- 3. Save Results ---
@@ -212,6 +257,8 @@ def process_bag(
     np.save(out_dir / 'scans.npy', np_scan_data)
     np.save(out_dir / 'steers.npy', synced_steers)
     np.save(out_dir / 'accelerations.npy', synced_accels)
+    np.save(out_dir / 'speeds.npy', synced_speeds)
+    np.save(out_dir / 'valid.npy', valid)
     
     # Save delta times only when debugging to save disk space/IO
     if debug:
@@ -256,6 +303,10 @@ def main():
     # Topic configuration
     parser.add_argument('--control-topic', type=str, default='/control/command/control_cmd', help='Topic name for control commands.')
     parser.add_argument('--scan-topic', type=str, default='/sensing/lidar/scan', help='Topic name for LiDAR scans.')
+    parser.add_argument('--velocity-topic', type=str, default='/vehicle/status/velocity_status',
+                        help='Actual vehicle speed topic used to mask out stopped samples (skipped if absent).')
+    parser.add_argument('--min-speed', type=float, default=0.5,
+                        help='Samples with actual speed below this [m/s] are marked invalid in valid.npy.')
     
     # Performance arguments
     default_workers = min(os.cpu_count() or 1, 8)
@@ -291,7 +342,8 @@ def main():
     logger.info(f"Found {len(bag_dirs)} bags. Starting processing with {num_workers} workers.")
 
     # --- Processing Phase ---
-    config = ExtractionConfig(control_topic=args.control_topic, scan_topic=args.scan_topic)
+    config = ExtractionConfig(control_topic=args.control_topic, scan_topic=args.scan_topic,
+                              velocity_topic=args.velocity_topic, min_speed=args.min_speed)
     tasks = [(p, args.outdir, config, args.debug) for p in bag_dirs]
 
     start_time = time.time()

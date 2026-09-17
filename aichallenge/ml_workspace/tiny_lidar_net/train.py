@@ -31,8 +31,16 @@ def main(cfg: DictConfig):
     print(f"Using device: {device}")
 
     # === Dataset ===
-    train_dataset = MultiSeqConcatDataset(cfg.data.train_dir)
-    val_dataset = MultiSeqConcatDataset(cfg.data.val_dir)
+    # n_frames は LiDAR を何フレーム分チャネル方向に重ねるか。そのままモデルの
+    # 入力チャネル数になる（1 なら従来の単フレーム入力）。
+    n_frames = cfg.data.get("n_frames", 1)
+    # target_mode="speed" のとき、出力の 0 番目は加速度ではなく正規化した目標速度になる。
+    target_mode = cfg.data.get("target_mode", "accel")
+    max_speed = cfg.data.get("max_speed", 8.34)
+    train_dataset = MultiSeqConcatDataset(
+        cfg.data.train_dir, n_frames=n_frames, target_mode=target_mode, max_speed=max_speed)
+    val_dataset = MultiSeqConcatDataset(
+        cfg.data.val_dir, n_frames=n_frames, target_mode=target_mode, max_speed=max_speed)
 
     train_loader = DataLoader(
         train_dataset,
@@ -56,12 +64,14 @@ def main(cfg: DictConfig):
     if cfg.model.name == "TinyLidarNetSmall":
         model = TinyLidarNetSmall(
             input_dim=cfg.model.input_dim,
-            output_dim=cfg.model.output_dim
+            output_dim=cfg.model.output_dim,
+            in_channels=n_frames
         ).to(device)
     else:
         model = TinyLidarNet(
             input_dim=cfg.model.input_dim,
-            output_dim=cfg.model.output_dim
+            output_dim=cfg.model.output_dim,
+            in_channels=n_frames
         ).to(device)
 
     if cfg.train.pretrained_path:
@@ -96,7 +106,7 @@ def main(cfg: DictConfig):
             train_loss = 0.0
 
             for scans, targets in tqdm(train_loader, desc=f"[Train] Epoch {epoch+1}/{cfg.train.epochs}"):
-                scans = scans.unsqueeze(1).to(device)
+                scans = scans.to(device)
                 targets = targets.to(device)
 
                 scans = clean_numerical_tensor(scans)
@@ -138,7 +148,7 @@ def validate(model, loader, device, criterion):
     total_loss = 0.0
     with torch.no_grad():
         for scans, targets in tqdm(loader, desc="[Val]", leave=False):
-            scans = scans.unsqueeze(1).to(device)
+            scans = scans.to(device)
             targets = targets.to(device)
             scans = clean_numerical_tensor(scans)
             targets = clean_numerical_tensor(targets)

@@ -10,12 +10,14 @@ class TinyLidarNet(nn.Module):
     Assumes default input_dim=1080 for shape annotations.
     """
 
-    def __init__(self, input_dim: int = 1080, output_dim: int = 2):
+    def __init__(self, input_dim: int = 1080, output_dim: int = 2, in_channels: int = 1):
         super().__init__()
 
         # --- Convolutional Layers ---
         # Input: 1080
-        self.conv1 = nn.Conv1d(1, 24, kernel_size=10, stride=4)  # -> (1080-10)/4 + 1 = 268
+        # in_channels は時系列スタック数。過去 N フレームをチャネル方向に重ねると、
+        # 1 フレームでは区別できない「近づいてくる他車」と「静止した壁」が見分けられる。
+        self.conv1 = nn.Conv1d(in_channels, 24, kernel_size=10, stride=4)  # -> (1080-10)/4 + 1 = 268
         self.conv2 = nn.Conv1d(24, 36, kernel_size=8, stride=4)  # -> (268-8)/4 + 1 = 66
         self.conv3 = nn.Conv1d(36, 48, kernel_size=4, stride=2)  # -> (66-4)/2 + 1 = 32
         self.conv4 = nn.Conv1d(48, 64, kernel_size=3)            # -> (32-3)/1 + 1 = 30
@@ -26,7 +28,7 @@ class TinyLidarNet(nn.Module):
         # --- Fully Connected Layers ---
         # Note: Dynamic calculation is good, but for jaxtyping clarity we assume logic matches
         with torch.no_grad():
-            dummy = torch.zeros(1, 1, input_dim)
+            dummy = torch.zeros(1, in_channels, input_dim)
             out = self.conv5(self.conv4(self.conv3(self.conv2(self.conv1(dummy)))))
             self.flatten_dim = out.view(1, -1).shape[1]
 
@@ -46,11 +48,11 @@ class TinyLidarNet(nn.Module):
 
     def forward(
         self, 
-        x: Float[Tensor, "batch 1 1080"]
+        x: Float[Tensor, "batch channels 1080"]
     ) -> Float[Tensor, "batch 2"]:
         
         # Feature Extraction (Conv + ReLU)
-        # Input: [B, 1, 1080]
+        # Input: [B, channels, 1080]
         x: Float[Tensor, "batch 24 268"] = F.relu(self.conv1(x))
         x: Float[Tensor, "batch 36 66"]  = F.relu(self.conv2(x))
         x: Float[Tensor, "batch 48 32"]  = F.relu(self.conv3(x))
@@ -77,18 +79,18 @@ class TinyLidarNetSmall(nn.Module):
     Assumes default input_dim=1080 for shape annotations.
     """
 
-    def __init__(self, input_dim: int = 1080, output_dim: int = 2):
+    def __init__(self, input_dim: int = 1080, output_dim: int = 2, in_channels: int = 1):
         super().__init__()
 
         # --- Convolutional Layers ---
-        self.conv1 = nn.Conv1d(1, 24, kernel_size=10, stride=4) # -> 268
+        self.conv1 = nn.Conv1d(in_channels, 24, kernel_size=10, stride=4) # -> 268
         self.conv2 = nn.Conv1d(24, 36, kernel_size=8, stride=4) # -> 66
         self.conv3 = nn.Conv1d(36, 48, kernel_size=4, stride=2) # -> 32
         
         # Flatten size: 48 ch * 32 length = 1536
 
         with torch.no_grad():
-            dummy = torch.zeros(1, 1, input_dim)
+            dummy = torch.zeros(1, in_channels, input_dim)
             out = self.conv3(self.conv2(self.conv1(dummy)))
             self.flatten_dim = out.view(1, -1).shape[1]
 
@@ -107,7 +109,7 @@ class TinyLidarNetSmall(nn.Module):
 
     def forward(
         self, 
-        x: Float[Tensor, "batch 1 1080"]
+        x: Float[Tensor, "batch channels 1080"]
     ) -> Float[Tensor, "batch 2"]:
         
         # Feature Extraction

@@ -43,7 +43,7 @@ def save_numpy_dict(params: Dict[str, np.ndarray], output_path: Path) -> None:
 
 
 def load_model(
-    model_name: str, input_dim: int, output_dim: int, ckpt_path: Path
+    model_name: str, input_dim: int, output_dim: int, ckpt_path: Path, in_channels: int = 1
 ) -> torch.nn.Module:
     """Initializes the model architecture and loads weights from a checkpoint.
 
@@ -52,6 +52,7 @@ def load_model(
         input_dim: The size of the input dimension (e.g., LiDAR rays).
         output_dim: The size of the output dimension (e.g., control commands).
         ckpt_path: The path to the PyTorch checkpoint file (.pth).
+        in_channels: Number of stacked LiDAR frames the checkpoint was trained with.
 
     Returns:
         The PyTorch model instance with loaded weights.
@@ -61,9 +62,9 @@ def load_model(
         FileNotFoundError: If the checkpoint file does not exist at ckpt_path.
     """
     if model_name == "tinylidarnet":
-        model = TinyLidarNet(input_dim=input_dim, output_dim=output_dim)
+        model = TinyLidarNet(input_dim=input_dim, output_dim=output_dim, in_channels=in_channels)
     elif model_name == "tinylidarnet_small":
-        model = TinyLidarNetSmall(input_dim=input_dim, output_dim=output_dim)
+        model = TinyLidarNetSmall(input_dim=input_dim, output_dim=output_dim, in_channels=in_channels)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
@@ -77,7 +78,7 @@ def load_model(
 
 
 def convert_checkpoint(
-    model_name: str, input_dim: int, output_dim: int, ckpt: Path, output: Path
+    model_name: str, input_dim: int, output_dim: int, ckpt: Path, output: Path, in_channels: int = 1
 ) -> None:
     """Orchestrates the model conversion process.
 
@@ -92,7 +93,7 @@ def convert_checkpoint(
         output: The destination path for the converted NumPy file.
     """
     # 1. Load Model (I/O & Logic)
-    model = load_model(model_name, input_dim, output_dim, ckpt)
+    model = load_model(model_name, input_dim, output_dim, ckpt, in_channels)
     
     # 2. Extract Parameters (Pure Logic) -> Easy to Unit Test
     params = extract_params_to_dict(model)
@@ -113,12 +114,13 @@ def main() -> None:
     parser.add_argument("--model", type=str, choices=["tinylidarnet", "tinylidarnet_small"], default="tinylidarnet", help="Model architecture")
     parser.add_argument("--input-dim", type=int, default=750, help="Input dimension size")
     parser.add_argument("--output-dim", type=int, default=2, help="Output dimension size")
+    parser.add_argument("--n-frames", type=int, default=1, help="Stacked LiDAR frames used at training time (model input channels)")
     parser.add_argument("--ckpt", type=Path, required=True, help="Source .pth checkpoint")
     parser.add_argument("--output", type=Path, default=Path("./weights/converted_weights.npy"), help="Destination .npy path")
 
     args = parser.parse_args()
 
-    convert_checkpoint(args.model, args.input_dim, args.output_dim, args.ckpt, args.output)
+    convert_checkpoint(args.model, args.input_dim, args.output_dim, args.ckpt, args.output, args.n_frames)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,17 @@ data:
   train_dir: "/aichallenge/ml_workspace/tiny_lidar_net/dataset/train"
   val_dir: "/aichallenge/ml_workspace/tiny_lidar_net/dataset/val"
 
+  # LiDARを何フレーム分チャネル方向に重ねて入力するか。1 で従来の単フレーム。
+  # 20Hz なので 4 フレーム = 過去 150ms 分。他車の接近速度が見えるようになる。
+  n_frames: 4
+
+  # 出力の縦方向成分を何にするか。
+  #   accel : 加速度をそのまま回帰（最大加速と急制動の二値に張り付き収束しにくい）
+  #   speed : 目標速度を max_speed で正規化して回帰。加速度への変換は推論ノード側の
+  #           比例制御が行う。コーナー手前で速度がなめらかに落ちるので学習しやすい。
+  target_mode: speed
+  max_speed: 8.34   # m/s (= 30 km/h)。MPC の v_max と揃える。
+
 model:
   # "TinyLidarNet" または "TinyLidarNetSmall"
   name: "TinyLidarNet"
