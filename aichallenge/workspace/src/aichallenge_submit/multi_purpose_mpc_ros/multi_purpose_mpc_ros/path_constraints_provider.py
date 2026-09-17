@@ -102,7 +102,10 @@ class PathConstraintsProvider(Node):
             BorderCells, "~/border_cells", latching_qos)
 
     def _obstacles_callback(self, msg: Float64MultiArray) -> None:
-        obstacles_updated = (self._last_obstacles_msgs_raw != msg.data) and (len(msg.data) > 0)
+        # 空配列は「障害物が無くなった」という更新として扱う。ここを弾いていると
+        # 一度入った障害物を消す手段が無く、居なくなった相手の分だけコースが
+        # 狭いままになる。
+        obstacles_updated = self._last_obstacles_msgs_raw != msg.data
         if obstacles_updated:
             self._last_obstacles_msgs_raw = msg.data
             self._obstacles = []
@@ -188,6 +191,10 @@ class PathConstraintsProvider(Node):
             input_constraints = {
                 "umin": np.array([0.0, -np.tan(mpc_cfg.delta_max) / car.length]),
                 "umax": np.array([mpc_cfg.v_max, np.tan(mpc_cfg.delta_max) / car.length])}
+            # NOTE: MPC の引数は steer_rate / wp_id_offset が増えており、位置引数で
+            # 渡していた旧シグネチャのままだと TypeError で起動しない。
+            # このノードは制約を「作る」側なので、topic からは受け取らない。
+            scaled_steer_rate_max = cfg_mpc.steer_rate_max / cfg_mpc.steering_tire_angle_gain_var
             mpc = MPC(
                 car,
                 mpc_cfg.N,
@@ -197,8 +204,11 @@ class PathConstraintsProvider(Node):
                 state_constraints,
                 input_constraints,
                 mpc_cfg.ay_max,
-                True,
-                True)
+                scaled_steer_rate_max,
+                cfg_mpc.wp_id_offset,
+                True,   # use_obstacle_avoidance
+                False,  # use_path_constraints_topic: 自分で計算する
+                cfg_mpc.use_max_kappa_pred)
             return mpc_cfg, mpc
 
         def compute_speed_profile(car: BicycleModel, mpc_config: MPCConfig) -> None:

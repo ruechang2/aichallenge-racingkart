@@ -20,8 +20,13 @@
   <arg name="launch_vehicle_interface" default="$(eval &quot;'$(var simulation)' == 'false'&quot;)"/>
   <log message="echo launch param use_sim_time: $(var use_sim_time) launch_vehicle_interface: $(var launch_vehicle_interface) sensor_model: $(var sensor_model)"/>
 
+  <!-- Dynamic obstacle avoidance (MPC only). use_lidar_obstacles makes the teacher
+       avoid other karts using the same scan the E2E student sees, instead of V2X. -->
+  <arg name="use_obstacle_avoidance" default="$(env USE_OBSTACLE_AVOIDANCE false)"/>
+  <arg name="use_lidar_obstacles" default="$(env USE_LIDAR_OBSTACLES false)"/>
+
   <!-- Control method -->
-  <arg name="control_method" default="mpc"
+  <arg name="control_method" default="$(env CONTROL_METHOD tiny_lidar_net)"
       description="Select control: mpc, pure_pursuit, tiny_lidar_net, pilot_net, joycon, rl_train"/>
 
   <!-- Global parameters -->
@@ -148,6 +153,8 @@
     <include file="$(find-pkg-share aichallenge_submit_launch)/launch/control/mpc.launch.xml">
       <arg name="use_sim_time" value="$(var use_sim_time)"/>
       <arg name="track" value="$(var track)"/>
+      <arg name="use_obstacle_avoidance" value="$(var use_obstacle_avoidance)"/>
+      <arg name="use_lidar_obstacles" value="$(var use_lidar_obstacles)"/>
     </include>
   </group>
 

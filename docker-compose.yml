@@ -23,6 +23,11 @@ x-autoware-base: &autoware-base
     - HOST_GID=${HOST_GID:-}
     - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-1}
     - LOG_DIR=${LOG_DIR:-}
+    # 走行ごとに切り替えるもの。既定は従来どおり（生徒・障害物回避なし）。
+    # 教師データ収集は CONTROL_METHOD=mpc USE_OBSTACLE_AVOIDANCE=true USE_LIDAR_OBSTACLES=true
+    - CONTROL_METHOD=${CONTROL_METHOD:-tiny_lidar_net}
+    - USE_OBSTACLE_AVOIDANCE=${USE_OBSTACLE_AVOIDANCE:-false}
+    - USE_LIDAR_OBSTACLES=${USE_LIDAR_OBSTACLES:-false}
   volumes:
     - ./output:${OUTPUT_ROOT:-/output}
     - ./aichallenge:/aichallenge

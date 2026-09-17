@@ -55,6 +55,11 @@ mpc:
   # steer_low_pass_gain: 0.3
   accel_low_pass_gain: 1.0
   steer_low_pass_gain: 1.0
+  # 回避時に経路中心から離れてよい距離 [m]（use_obstacle_avoidance のときだけ効く）。
+  # 占有格子の空き領域はアプロンや退避エリアを含み実際の路面より広いので、
+  # 制限しないと避けながら外へ出て座礁する。コース幅は実測 3.7〜4.9 m。
+  # 切り詰めると通れなくなる区間は自動的に元のコリドーに戻す。
+  max_lateral_offset: 2.0
   wp_id_offset: 2
   use_max_kappa_pred: true
 
@@ -110,3 +115,59 @@ v2x_obstacle_avoidance:
   vehicle_radius: 0.5          # [m]
   v_max_safety: 30.0           # [m/s]
   position_jump_threshold: 5.0 # [m]
+
+# 他車を LiDAR から推定して避ける。use_lidar_obstacles:=true のときだけ使われる。
+# E2E の教師データを作るための設定で、生徒（TinyLidarNet）が見るスキャンだけから
+# 避ける理由が説明できる状態を作る。V2X 由来の位置はここでは使わない。
+lidar_obstacle_avoidance:
+  scan_topic: "/sensing/lidar/scan"  # 生徒が購読するものと同じ topic にすること
+  vehicle_radius: 0.5      # [m] 他車を表す円の半径。V2X 側と揃えてある
+  min_range: 0.5           # [m] これより近い返りは自車まわりとみなして捨てる
+  max_range: 20.0          # [m] 検出から回避までの余裕時間で決める
+  cluster_gap: 0.5         # [m] 隣り合う点がこれ以上離れたら別クラスタ
+  min_points: 3            # これ未満の点数はノイズとして捨てる
+  max_extent: 2.5          # [m] 外接矩形の対角がこれを超えるものは壁とみなす
+                           #     カートは全長 1.1m 程度なので、姿勢が斜めでも収まる
+  isolation_gap: 1.0       # [m] クラスタの両端がこれ以上飛んでいなければ壁の断片
+  static_margin: 0.3       # [m] 静的地図の占有セルからこの距離内なら壁とみなす
+                           #     大きくすると壁際を走る他車を取りこぼす
+  association_radius: 2.0  # [m] 同一車両とみなして追跡を継ぐ探索半径
+  track_timeout: 0.5       # [s] この時間見えなければ追跡を破棄する
+  update_interval: 0.1     # [s] 障害物を MPC に渡し直す間隔
+  v_max_safety: 30.0       # [m/s] これを超える速度は対応づけ誤りとみて 0 に倒す
+  # 検出した他車を path_constraints_provider へ渡す設定。コリドーを作るのは
+  # provider 側なので、ここを publish しない限り LiDAR で見えていても避けない。
+  objects_topic: "/aichallenge/objects"
+  objects_publish_interval: 1.0  # [s] provider の再計算は約 2 秒かかるので、
+                                 #     それより速く投げても掃き直しが増えるだけ
+  objects_min_samples: 2         # 連続で見えた追跡だけを渡す（1 フレームの
+                                 #     ちらつきを障害物にしない）
+  sensor_offset_x: 1.65    # [m] base_link から見た LiDAR の位置
+                           #     racing_kart_sensor_kit_description/config/sensors_calibration.yaml
+  sensor_offset_y: 0.0
+  # 前方の他車に対する速度上限（gap keeping）。v <= sqrt(2 a (d - d_stop))。
+  # コリドー回避は provider の再計算に約 2 秒かかり、コーナーで詰まった相手には
+  # 間に合わず追突していた（wp 247 で 2 走行とも停止）。追いついたら後ろで止まる。
+  gap_brake_decel: 1.2      # [m/s^2] MPC の制動下限 1.6 より控えめに
+  gap_stop_distance: 3.0    # [m] 相手中心までこの距離で停止（カート全長 1.1 + 余裕）
+  gap_lateral_limit: 1.3    # [m] 車体座標でこの横ずれ以内の相手だけ「前方」とみなす
+                            #     （横に並んで抜いている相手で減速しないよう車幅程度に）
+  # 追い越しの側寄せ。相手が近いとき、目標横位置を相手の反対側へこの分ずらす。
+  # provider のコリドー再計算（約 2 秒）を待っていると相手の後ろで止まったまま
+  # 動けない（実測: 2.7 m 後ろで 0.3 m/s、ステアは相手側）。
+  pass_bias: 1.2            # [m] 目標横位置のずらし幅（コリドーの内側にクリップ）
+  pass_bias_range: 10.0     # [m] この距離より近い相手にだけ効かせる
+  gap_max_range: 20.0       # [m] これより遠い相手には反応しない
+  # 生スキャン版。壁に寄せて止まったカートはスキャン上で壁と 1 つのクラスタになり
+  # 追跡に乗らない（実測: wp 249 で 98 秒押し続けた）。自車正面の箱の中にあって
+  # 静的地図に無い点があれば、その距離（base_link から）で同じ式で頭を抑える。
+  gap_box_enabled: false      # ヘアピンで壁の点が地図に乗らず「他車」扱いになり、幻の障害物で
+                              # コリドーが外へ寄って本物の壁に刺さった（2 走行とも wp 247）。
+                              # 静的地図の精度が上がるまで無効。
+  gap_box_half_width: 0.9     # [m] 箱の半幅。車幅 1.3 の半分 + 余裕
+  gap_box_stop_distance: 2.6  # [m] base_link からこの距離で停止（LiDAR は 1.65 m 前なので車間は約 1 m）
+  # 0 まで落とすと相手が動くまで待つだけになるので、最低速度は残す（横を抜ける
+  # 経路が立っていれば、進むうちに相手が前方の箱から外れて上限が戻る）
+  gap_creep_speed: 0.3        # [m/s] 追跡中の相手に対する最低速度（0.8 では相手に触れるまで寄った）
+  gap_box_creep_speed: 0.4    # [m/s] 箱検出に対する最低速度
+  gap_box_min_points: 3       # これ未満の点数はノイズ

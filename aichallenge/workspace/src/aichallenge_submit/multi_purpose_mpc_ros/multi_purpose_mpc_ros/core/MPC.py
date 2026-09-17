@@ -13,7 +13,8 @@ PREDICTION = '#BA4A00'
 
 class MPC:
     def __init__(self, model, N, Q, R, QN, StateConstraints, InputConstraints,
-                 ay_max, max_steering_rate, wp_id_offset, use_obstacle_avoidance, use_path_constraints_topic, use_max_kappa_pred=True):
+                 ay_max, max_steering_rate, wp_id_offset, use_obstacle_avoidance, use_path_constraints_topic, use_max_kappa_pred=True,
+                 max_lateral_offset=0.0):
         """
         Constructor for the Model Predictive Controller.
         :param model: bicycle model object to be controlled
@@ -50,6 +51,15 @@ class MPC:
 
         # 追加: ay_maxによる速度制限の方式切り替え
         self.use_max_kappa_pred = use_max_kappa_pred
+        # 回避時に経路中心から離れてよい距離 [m]。0 なら無制限。
+        # 占有格子の「空き」は実際に走れる路面より広く（アプロンや退避エリアを含む）、
+        # 無制限だと避けながら路面外へ出て座礁する。実測では停止直前に
+        # 横ずれが 0.55 -> 1.70 -> 3.64 m と膨らんでいた。
+        self.max_lateral_offset = float(max_lateral_offset)
+        # 回避時の目標横位置 [m]（経路左が正）。0 ならレースライン。前方の他車の
+        # 反対側へ寄せるために controller が毎周期セットする。コリドーの内側に
+        # クリップされるので路面外には出ない。
+        self.lateral_bias = 0.0
         # 既存の初期化
         self.current_prediction = None
         self.infeasibility_counter = 0
@@ -164,11 +174,53 @@ class MPC:
                 ub[infeasible_index] = 0.0
                 lb[infeasible_index] = 0.0
 
+        if self.use_obstacle_avoidance and self.max_lateral_offset > 0.0:
+            # 障害物でコリドーが閉じた区間（幅がほぼ 0）は、そのままだと e_y=0 を強制されて
+            # QP が解けない。解けない間は古い指令を使い回すので車は壁へ進む
+            # （実測: 482 周期解けずに wp 40 で壁に刺さった）。閉じた区間は経路中心
+            # ±limit の窓に戻し、相手との距離は gap keeping の速度上限に任せる。
+            _limit = self.max_lateral_offset
+            _e_y0 = float(self.model.spatial_state.e_y)
+            _hi = max(_limit, _e_y0 + 0.3)
+            _lo = min(-_limit, _e_y0 - 0.3)
+            closed = (ub - lb) < 0.3
+            ub = np.where(closed, _hi, ub)
+            lb = np.where(closed, _lo, lb)
+
         # Update dynamic state constraints
         xmin_dyn[0] = xmax_dyn[0] = self.model.spatial_state.e_y
         xmin_dyn[self.nx::self.nx] = lb
         xmax_dyn[self.nx::self.nx] = ub
-        xr[self.nx::self.nx] = (lb + ub) / 2
+        if self.use_obstacle_avoidance and self.max_lateral_offset > 0.0:
+            # 路面外へ出ないよう、コリドーを経路中心から一定距離までに切り詰める。
+            # ただし切り詰めると通れなくなる区間（相手が路面いっぱいを塞いでいる等）は
+            # 元のコリドーに戻す。そこで詰まって止まるより、膨らんででも抜けるほうがよい。
+            limit = self.max_lateral_offset
+            # 現在位置は必ずコリドーに含める。回避で limit を超えて外へ出たあと
+            # （実測: 他車の後ろで止まった後に e_y = -3.25 m）、切り詰めた
+            # コリドーが自車を含まないと QP が解けず u=0 のまま二度と動けない。
+            # 自車位置まで広げておけば、ラインへ戻る解が存在する。
+            e_y0 = float(self.model.spatial_state.e_y)
+            hi = max(limit, e_y0 + 0.3)
+            lo = min(-limit, e_y0 - 0.3)
+            ub_clamped = np.minimum(ub, hi)
+            lb_clamped = np.maximum(lb, lo)
+            passable = ub_clamped > lb_clamped
+            ub = np.where(passable, ub_clamped, ub)
+            lb = np.where(passable, lb_clamped, lb)
+            xmin_dyn[self.nx::self.nx] = lb
+            xmax_dyn[self.nx::self.nx] = ub
+
+        if self.use_obstacle_avoidance:
+            # 回避モードの ub/lb は地図の空きスペースから作られるため、中点は
+            # 走行ラインではなく「空き地の真ん中」になる。実測ではレースラインから
+            # 0.5 m 以上ずれる区間が 73%、1 m 以上が 39%（最大 +1.96/-1.74 m）あり、
+            # そのまま目標にすると車は縁石側へ寄っていく。
+            # 目標はあくまでラインに置き、コリドーに入らないときだけ端に寄せる。
+            # ub/lb には safety_margin が既に引かれているので、端に寄せても余裕は残る。
+            xr[self.nx::self.nx] = np.clip(self.lateral_bias, lb, ub)
+        else:
+            xr[self.nx::self.nx] = (lb + ub) / 2
 
         # Get equality matrix
         Ax = sparse.kron(sparse.eye(N + 1), -sparse.eye(self.nx)) + sparse.csc_matrix(A)

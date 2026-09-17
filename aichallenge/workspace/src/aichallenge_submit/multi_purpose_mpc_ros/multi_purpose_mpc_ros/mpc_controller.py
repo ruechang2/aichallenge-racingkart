@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 import yaml
 from typing import List, Tuple, Optional, NamedTuple
 import dataclasses
@@ -19,7 +20,7 @@ from rclpy.parameter import Parameter
 from visualization_msgs.msg import Marker, MarkerArray
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy, QoSHistoryPolicy
 
-from std_msgs.msg import Empty, Bool, Float32MultiArray, Int32
+from std_msgs.msg import Empty, Bool, Float32MultiArray, Float64MultiArray, Int32
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Quaternion, Pose2D, Point, Vector3
 from std_msgs.msg import ColorRGBA
@@ -29,8 +30,11 @@ from rclpy.parameter import Parameter
 
 # autoware
 from autoware_auto_control_msgs.msg import AckermannControlCommand
+from autoware_auto_vehicle_msgs.msg import GearCommand
 from autoware_auto_planning_msgs.msg import Trajectory
+from sensor_msgs.msg import LaserScan
 from v2x_msgs.msg import V2XVehiclePositionArray
+from multi_purpose_mpc_ros.lidar_vehicle_tracker import LidarVehicleTracker
 from multi_purpose_mpc_ros.v2x_vehicle_tracker import (
     V2XVehicleTracker,
     predictions_to_obstacles,
@@ -133,12 +137,17 @@ class MPCController(Node):
         # declare parameters
         self.declare_parameter("use_boost_acceleration", False)
         self.declare_parameter("use_obstacle_avoidance", False)
+        self.declare_parameter("use_lidar_obstacles", False)
         self.declare_parameter("use_stats", False)
 
         # get parameters
         self.use_sim_time = self.get_parameter("use_sim_time").get_parameter_value().bool_value
         self.USE_BUG_ACC = self.get_parameter("use_boost_acceleration").get_parameter_value().bool_value
         self.USE_OBSTACLE_AVOIDANCE = self.get_parameter("use_obstacle_avoidance").get_parameter_value().bool_value
+        # 他車の位置を V2X ではなく LiDAR から推定する。E2E の教師データを作るときは
+        # こちらを使う。V2X は生徒（TinyLidarNet）が持たない情報なので、V2X で避けた
+        # デモは「スキャンからは避ける理由が見えない」ラベルになり、模倣できない。
+        self.USE_LIDAR_OBSTACLES = self.get_parameter("use_lidar_obstacles").get_parameter_value().bool_value
         self.use_stats = self.get_parameter("use_stats").get_parameter_value().bool_value
 
         self._config_path = config_path
@@ -161,6 +170,8 @@ class MPCController(Node):
         if self.USE_OBSTACLE_AVOIDANCE:
             self.get_logger().warn("------------------------------------")
             self.get_logger().warn("USE_OBSTACLE_AVOIDANCE is enabled!")
+            source = "LiDAR" if self.USE_LIDAR_OBSTACLES else "V2X"
+            self.get_logger().warn(f"dynamic obstacle source: {source}")
             self.get_logger().warn("------------------------------------")
 
     def _load_config(self) -> NamedTuple:
@@ -418,7 +429,8 @@ class MPCController(Node):
                 mpc_cfg.wp_id_offset,
                 self.USE_OBSTACLE_AVOIDANCE,
                 self._cfg.reference_path.use_path_constraints_topic,
-                mpc_cfg.use_max_kappa_pred)
+                mpc_cfg.use_max_kappa_pred,
+                float(getattr(cfg_mpc, "max_lateral_offset", 2.0)))
 
             return mpc_cfg, mpc
 
@@ -458,14 +470,23 @@ class MPCController(Node):
             self._v2x_vehicle_radius = float(v2x_cfg.vehicle_radius)
             mpc_N = int(self._cfg.mpc.N)  # type: ignore
             t_horizon = mpc_N / float(self._cfg.mpc.control_rate)  # type: ignore
-            self._v2x_t_samples = [
+            self._prediction_t_samples = [
                 k * t_horizon / max(mpc_N - 1, 1) for k in range(mpc_N)
             ]
-            # コリドー外の V2X 障害物で MPC のコリドー狭窄/反転が起きないよう、
+
+            self._lidar_tracker: Optional[LidarVehicleTracker] = None
+            self._lidar_vehicle_radius = self._v2x_vehicle_radius
+            if self.USE_LIDAR_OBSTACLES:
+                self._lidar_tracker = self._create_lidar_tracker()
+                self._lidar_vehicle_radius = self._lidar_tracker.vehicle_radius
+
+            dynamic_radius = (self._lidar_vehicle_radius if self.USE_LIDAR_OBSTACLES
+                              else self._v2x_vehicle_radius)
+            # コリドー外の動的障害物で MPC のコリドー狭窄/反転が起きないよう、
             # ref-path 近傍のみに絞り込む。閾値 = max_width/2 + vehicle_radius + 余白。
             ref_max_width = float(self._cfg.reference_path.max_width)  # type: ignore
-            self._v2x_corridor_threshold_sq = (
-                ref_max_width / 2.0 + self._v2x_vehicle_radius + 0.5
+            self._corridor_threshold_sq = (
+                ref_max_width / 2.0 + dynamic_radius + 0.5
             ) ** 2
             wps = self._reference_path.waypoints
             self._waypoint_xy = np.asarray(
@@ -495,6 +516,12 @@ class MPCController(Node):
 
     def _setup_pub_sub(self) -> None:
         # Publishers
+        # 教師が壁や他車に押し当てて動けなくなったときの脱出用（学習には使わない区間）。
+        self._gear_pub = self.create_publisher(GearCommand, "/control/command/gear_cmd", 1)
+        self._stuck_since: Optional[float] = None
+        self._reverse_until: Optional[float] = None
+        self._reverse_steer = 0.0
+        self._recover_cooldown_until = 0.0
         if self.USE_BUG_ACC:
           self._command_pub = self.create_publisher(
             AckermannControlBoostCommand, "/boost_commander/command", 1)
@@ -550,11 +577,51 @@ class MPCController(Node):
                 self._border_cells_sub = self.create_subscription(
                     BorderCells, "/path_constraints_provider/border_cells", self._border_cells_callback, 1)
 
-            self._v2x_sub = self.create_subscription(
-                V2XVehiclePositionArray,
-                "/v2x/vehicle_positions",
-                self._v2x_callback,
-                1)
+            if self.USE_LIDAR_OBSTACLES:
+                # 生徒と同じ topic を見る。ここがずれると「教師は見えていたが
+                # 生徒には見えない障害物」を避けるデモになり、模倣できなくなる。
+                lidar_cfg = getattr(self._cfg, "lidar_obstacle_avoidance", None)
+                scan_topic = getattr(lidar_cfg, "scan_topic", "/sensing/lidar/scan")
+                # 経路制約を topic から受け取る構成では、コリドーを作るのは
+                # path_constraints_provider 側なので、検出した他車はそちらへ渡す。
+                # ここに publish しない限り、LiDAR で見えていても避けない。
+                self._objects_pub = self.create_publisher(
+                    Float64MultiArray,
+                    getattr(lidar_cfg, "objects_topic", "/aichallenge/objects"),
+                    1)
+                # LaserScan は BEST_EFFORT で流れてくるので、既定の RELIABLE では
+                # 購読が成立せずスキャンが 1 枚も届かない。
+                scan_qos = QoSProfile(
+                    reliability=QoSReliabilityPolicy.BEST_EFFORT,
+                    history=QoSHistoryPolicy.KEEP_LAST,
+                    depth=1,
+                )
+                self._scan_sub = self.create_subscription(
+                    LaserScan, scan_topic, self._scan_callback, scan_qos)
+            else:
+                self._v2x_sub = self.create_subscription(
+                    V2XVehiclePositionArray,
+                    "/v2x/vehicle_positions",
+                    self._v2x_callback,
+                    1)
+
+    def _pure_pursuit_steer(self, pose, lookahead_wps: int = 6, max_steer: float = 0.5) -> float:
+        """Steer toward a waypoint a few steps ahead of the nearest one."""
+        wps = self._waypoint_xy
+        d2 = (wps[:, 0] - pose.x) ** 2 + (wps[:, 1] - pose.y) ** 2
+        i = (int(np.argmin(d2)) + lookahead_wps) % len(wps)
+        dx, dy = wps[i, 0] - pose.x, wps[i, 1] - pose.y
+        alpha = math.atan2(dy, dx) - pose.theta
+        alpha = math.atan2(math.sin(alpha), math.cos(alpha))
+        ld = max(math.hypot(dx, dy), 1.0)
+        steer = math.atan2(2.0 * 1.087 * math.sin(alpha), ld)
+        return float(np.clip(steer, -max_steer, max_steer))
+
+    def _publish_gear(self, reverse: bool) -> None:
+        msg = GearCommand()
+        msg.stamp = self.get_clock().now().to_msg()
+        msg.command = GearCommand.REVERSE if reverse else GearCommand.DRIVE
+        self._gear_pub.publish(msg)
 
     def _create_ackerman_control_command(self, stamp, u, acc, bug_acc_enabled):
         v_cmd = u[0]
@@ -597,15 +664,263 @@ class MPCController(Node):
 
     def _v2x_callback(self, msg: V2XVehiclePositionArray) -> None:
         self._v2x_tracker.update(msg)
-        predictions = self._v2x_tracker.predict_all(self._v2x_t_samples)
+        predictions = self._v2x_tracker.predict_all(self._prediction_t_samples)
         self._dynamic_obstacles = predictions_to_obstacles(
             predictions, self._v2x_vehicle_radius)
         self._obstacles_updated = True
 
+    def _create_lidar_tracker(self) -> LidarVehicleTracker:
+        """Builds the LiDAR tracker from config, wired to the static map.
+
+        Walls are rejected twice: by cluster shape inside the tracker, and by
+        the occupancy map here. Shape alone keeps a wall seen edge-on, and the
+        map alone drops karts that happen to drive along the wall, so both are
+        needed.
+        """
+        cfg = getattr(self._cfg, "lidar_obstacle_avoidance", None)
+
+        def value(name, default):
+            return float(getattr(cfg, name, default)) if cfg is not None else float(default)
+
+        self._lidar_static_margin = value("static_margin", 0.3)
+        # 障害物の入れ替えは map の再構築と経路制約の作り直しを伴うので、
+        # スキャンが来るたびにはやらない。追跡自体は毎スキャン更新する。
+        self._lidar_update_interval = value("update_interval", 0.1)
+        self._last_obstacle_update = 0.0
+        self._objects_publish_interval = value("objects_publish_interval", 1.0)
+        self._objects_min_samples = int(value("objects_min_samples", 2))
+        self._last_objects_publish = 0.0
+        self._last_published_objects: List[Tuple[float, float]] = []
+        # 前方の他車に対する速度上限（gap keeping）。コリドー回避は provider の
+        # 再計算に約 2 秒かかり、コーナーで詰まった相手には間に合わずに追突していた
+        # （実測: wp 247 で 2 走行とも停止）。相手までの距離 d に対して
+        # v <= sqrt(2 a (d - d_stop)) で頭を抑え、追いついたら後ろで止まる。
+        # 生徒は同じスキャンで相手を見ているので、この減速は模倣できる。
+        self._gap_brake_decel = value("gap_brake_decel", 1.2)
+        self._gap_stop_distance = value("gap_stop_distance", 3.0)
+        self._gap_lateral_limit = value("gap_lateral_limit", 2.0)
+        self._gap_max_range = value("gap_max_range", 20.0)
+        self._lead_gap: Optional[float] = None
+        self._pass_bias = value("pass_bias", 1.2)
+        self._pass_bias_range = value("pass_bias_range", 10.0)
+        # 追跡に乗らない相手（壁に寄せて止まったカートはスキャン上で壁と
+        # ひとつのクラスタになり、形状で弾かれる）のための生スキャン版。
+        # 自車正面の箱の中にあって静的地図に無い点があれば、その距離で頭を抑える。
+        self._box_half_width = value("gap_box_half_width", 0.9)
+        self._box_stop_distance = value("gap_box_stop_distance", 2.0)
+        self._box_min_points = int(value("gap_box_min_points", 3))
+        # 既定は無効。静的地図と実際の壁のずれ（ヘアピン）で壁の点が「他車」になり、
+        # その幻の障害物でコリドーが外へ寄って本物の壁に刺さった（run3: 2 回とも wp 247）。
+        self._box_enabled = bool(value("gap_box_enabled", 0.0))
+        # 上限を 0 まで落とすと、相手の横を抜ける経路が立っていても動けず、相手が
+        # 動くまで待つだけになる（実測: 2.7 m 後ろで v_max=0、ステア 0.68 のまま停止）。
+        # 最低これだけは進ませ、進路が変わって相手が箱から外れたら上限が戻る。
+        self._gap_creep_speed = value("gap_creep_speed", 0.8)
+        self._box_creep_speed = value("gap_box_creep_speed", 0.4)
+        self._lead_gap_box: Optional[float] = None
+        # 箱で見つけた点の重心（map 座標）。追跡に乗らない相手を provider と MPC の
+        # 地図にも障害物として渡し、後ろで止まるだけでなく横を抜けられるようにする。
+        self._box_obstacle: Optional[Tuple[float, float]] = None
+        return LidarVehicleTracker(
+            vehicle_radius=value("vehicle_radius", 0.5),
+            min_range=value("min_range", 0.5),
+            max_range=value("max_range", 12.0),
+            cluster_gap=value("cluster_gap", 0.5),
+            min_points=int(value("min_points", 3)),
+            max_extent=value("max_extent", 2.5),
+            isolation_gap=value("isolation_gap", 1.0),
+            association_radius=value("association_radius", 2.0),
+            track_timeout=value("track_timeout", 0.5),
+            v_max_safety=value("v_max_safety", 30.0),
+            sensor_offset_x=value("sensor_offset_x", 1.65),
+            sensor_offset_y=value("sensor_offset_y", 0.0),
+            is_static=self._map_is_occupied,
+            warn_callback=self.get_logger().warn,
+        )
+
+    def _map_is_occupied(self, x: float, y: float) -> bool:
+        """True if the static map is occupied at (x, y) within the margin.
+
+        Uses ``data_backup`` (the map as loaded) rather than ``data``, which
+        already carries the obstacles we inflated into it on previous cycles.
+        """
+        m = self._map
+        dx, dy = m.w2m(x, y)
+        if dx < 0 or dy < 0 or dx >= m.width or dy >= m.height:
+            # 地図の外は「走れない所」＝静的扱い。ここを False にすると地図の縁の外に
+            # 見えたフェンス等が他車として扱われ、障害物が地図外に置かれる。
+            return True
+        cells = max(int(round(self._lidar_static_margin / m.resolution)), 0)
+        x0, x1 = max(dx - cells, 0), min(dx + cells + 1, m.width)
+        y0, y1 = max(dy - cells, 0), min(dy + cells + 1, m.height)
+        if x0 >= x1 or y0 >= y1:
+            return False
+        # process_map() の規約で 1 が空き、0 が占有。
+        return bool(np.any(m.data_backup[y0:y1, x0:x1] == 0))
+
+    def _scan_callback(self, msg: LaserScan) -> None:
+        if self._odom is None:
+            return
+        pose = odom_to_pose_2d(self._odom)
+        now = self.get_clock().now().nanoseconds / 1e9
+        self._lidar_tracker.update(
+            now,
+            msg.ranges,
+            float(msg.angle_min),
+            float(msg.angle_increment),
+            (pose.x, pose.y, pose.theta),
+        )
+
+        tracker = self._lidar_tracker
+        self.get_logger().info(
+            f"LiDAR obstacles: {len(tracker.last_detections)} detected, "
+            f"{len(tracker.active_vehicle_ids())} tracked "
+            f"(rejected: shape={tracker.last_rejected_shape}, "
+            f"static={tracker.last_rejected_static})",
+            throttle_duration_sec=2.0)
+
+        self._publish_objects(now, tracker)
+        self._lead_gap = self._compute_lead_gap(pose, tracker)
+        self._lead_gap_box = self._compute_box_gap(msg, pose) if self._box_enabled else None
+        if not self._box_enabled:
+            self._box_obstacle = None
+
+        if (now - self._last_obstacle_update) < self._lidar_update_interval:
+            return
+        self._last_obstacle_update = now
+        predictions = tracker.predict_all(self._prediction_t_samples)
+        self._dynamic_obstacles = predictions_to_obstacles(
+            predictions, self._lidar_vehicle_radius)
+        if self._box_obstacle is not None and not any(
+                (p[0] - self._box_obstacle[0]) ** 2 + (p[1] - self._box_obstacle[1]) ** 2 < 1.5 ** 2
+                for p in tracker.confirmed_positions(self._objects_min_samples)):
+            self._dynamic_obstacles.append(
+                Obstacle(self._box_obstacle[0], self._box_obstacle[1], self._lidar_vehicle_radius))
+        self._obstacles_updated = True
+
+    def _compute_lead_gap(self, pose, tracker: LidarVehicleTracker) -> Optional[float]:
+        """Distance to the nearest tracked kart ahead of us and near our path.
+
+        "Ahead" is judged in the body frame (positive longitudinal offset,
+        small lateral offset) and "near our path" by distance to the reference
+        waypoints, so a kart on a neighbouring straight is not braked for.
+        Returns None when nothing qualifies.
+        """
+        positions = tracker.confirmed_positions(self._objects_min_samples)
+        if not positions:
+            return None
+        c, s_ = np.cos(pose.theta), np.sin(pose.theta)
+        thr_sq = self._corridor_threshold_sq
+        wps = self._waypoint_xy
+        best: Optional[float] = None
+        best_lat = 0.0
+        for x, y in positions:
+            dx, dy = x - pose.x, y - pose.y
+            lon = c * dx + s_ * dy
+            lat = -s_ * dx + c * dy
+            if lon <= 0.0 or lon > self._gap_max_range or abs(lat) > self._gap_lateral_limit:
+                continue
+            if wps.size and np.min((wps[:, 0] - x) ** 2 + (wps[:, 1] - y) ** 2) > thr_sq:
+                continue
+            d = float(np.hypot(dx, dy))
+            if best is None or d < best:
+                best = d
+                best_lat = float(lat)
+        # 追い越しの側を決める。provider のコリドー再計算（約 2 秒）を待たず、
+        # 相手の反対側へ目標横位置を寄せる。相手が左（lat>0）なら右へ。
+        # 相手が近いときだけ効かせ、遠ければライン（0）に戻す。
+        if best is not None and best < self._pass_bias_range:
+            self._mpc.lateral_bias = -math.copysign(self._pass_bias, best_lat)
+        else:
+            self._mpc.lateral_bias = 0.0
+        return best
+
+    def _with_box_obstacle(self, positions: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        """Append the front-box detection unless a track already covers it."""
+        b = self._box_obstacle
+        if b is None:
+            return positions
+        for x, y in positions:
+            if (x - b[0]) ** 2 + (y - b[1]) ** 2 < 1.5 ** 2:
+                return positions
+        # 位置は 1 m 刻みに丸める。毎スキャン数 cm 動く重心をそのまま送ると
+        # provider（再計算 2 秒）が計算し直すだけで一度も配れない。
+        return positions + [(float(round(b[0])), float(round(b[1])))]
+
+    def _compute_box_gap(self, msg: LaserScan, pose) -> Optional[float]:
+        """Nearest non-map return directly ahead, as longitudinal distance from base_link.
+
+        Points on the static map (walls, curbs) are ignored, so this reacts to
+        karts only — including one parked against the wall, which the cluster
+        tracker cannot separate from the wall. Returns None when the box is clear.
+        """
+        ranges = np.asarray(msg.ranges, dtype=np.float32)
+        n = len(ranges)
+        if n == 0:
+            return None
+        angles = msg.angle_min + np.arange(n) * msg.angle_increment
+        ok = np.isfinite(ranges) & (ranges > 0.3) & (ranges < self._gap_max_range)
+        sx = ranges * np.cos(angles) + self._lidar_tracker.sensor_offset_x
+        sy = ranges * np.sin(angles) + self._lidar_tracker.sensor_offset_y
+        ok &= (sx > 0.0) & (np.abs(sy) < self._box_half_width)
+        idx = np.flatnonzero(ok)
+        if len(idx) < self._box_min_points:
+            return None
+        c, s_ = np.cos(pose.theta), np.sin(pose.theta)
+        lon = []
+        pts = []
+        for i in idx:
+            mx = pose.x + c * sx[i] - s_ * sy[i]
+            my = pose.y + s_ * sx[i] + c * sy[i]
+            if not self._map_is_occupied(mx, my):
+                lon.append(float(sx[i]))
+                pts.append((mx, my))
+        if len(lon) < self._box_min_points:
+            self._box_obstacle = None
+            return None
+        # 見えているのは相手の手前の面。重心を進行方向へ半径分押して中心に寄せる。
+        gx = float(np.mean([q[0] for q in pts])) + c * self._lidar_vehicle_radius
+        gy = float(np.mean([q[1] for q in pts])) + s_ * self._lidar_vehicle_radius
+        self._box_obstacle = (gx, gy)
+        return float(min(lon))
+
+    def _publish_objects(self, now: float, tracker: LidarVehicleTracker) -> None:
+        """Hand the detected karts to path_constraints_provider.
+
+        The provider rebuilds the whole track's corridor from this list, which
+        takes about two seconds, so publishing faster than that only makes it
+        restart the sweep. Positions are the current ones, not the predicted
+        ones: by the time the corridor is rebuilt a prediction would be stale
+        anyway, and the obstacle radius carries the margin.
+        """
+        positions = tracker.confirmed_positions(self._objects_min_samples)
+        positions = self._with_box_obstacle(positions)
+        if positions == self._last_published_objects:
+            return
+        # 障害物が増えたときは間隔を待たない。間隔は「同じ相手の位置を
+        # 送り直す頻度」を抑えるためのもので、初検出を遅らせると
+        # provider の再計算 2 秒と合わさって回避が間に合わなくなる。
+        appeared = len(positions) > len(self._last_published_objects)
+        if not appeared and (now - self._last_objects_publish) < self._objects_publish_interval:
+            return
+        self._last_objects_publish = now
+        self._last_published_objects = positions
+
+        msg = Float64MultiArray()
+        data: List[float] = []
+        for x, y in positions:
+            # provider は 4 値ずつ読み、先頭 2 つを中心座標として使う。
+            data.extend([float(x), float(y), 0.0, float(self._lidar_vehicle_radius)])
+        msg.data = data
+        self._objects_pub.publish(msg)
+        self.get_logger().info(
+            f"published {len(positions)} LiDAR obstacles to the constraints provider",
+            throttle_duration_sec=5.0)
+
     def _filter_obstacles_to_corridor(self, obstacles: List[Obstacle]) -> List[Obstacle]:
         if not obstacles or self._waypoint_xy.size == 0:
             return obstacles
-        thr_sq = self._v2x_corridor_threshold_sq
+        thr_sq = self._corridor_threshold_sq
         wps = self._waypoint_xy
         kept: List[Obstacle] = []
         for ob in obstacles:
@@ -805,6 +1120,22 @@ class MPCController(Node):
 
         with self._stats.time_block("control"):
             u, max_delta = self._mpc.get_control()
+        if self._mpc.infeasibility_counter > 0:
+            # 解けないと前回の解を使い回すので、指令が実態と合わなくなる。原因調査用。
+            self.get_logger().warn(
+                f"MPC infeasible x{self._mpc.infeasibility_counter} (wp={self._mpc.model.wp_id}, "
+                f"e_y={self._mpc.model.spatial_state.e_y:+.2f}, v_max={self._mpc.input_constraints['umax'][0]:.2f})",
+                throttle_duration_sec=2.0)
+            if self._mpc.infeasibility_counter >= 3 and len(u) >= 2:
+                # 古い解で走り続けて壁に刺さるより、舵は保ったまま止まる。
+                u = np.array([0.0, u[1]])
+            if self._mpc.infeasibility_counter >= 10 and self._waypoint_xy.size:
+                # 解けないまま止まり続けても戻れない（実測: 横 3 m・進路と 107 度の姿勢で
+                # 209 周期）。ラインへ向かう単純な pure pursuit で低速で戻し、姿勢が
+                # 戻れば MPC が再び解ける。
+                u = np.array([1.5, self._pure_pursuit_steer(pose)])
+                self.get_logger().warn("MPC infeasible: falling back to pure pursuit toward the line",
+                                       throttle_duration_sec=2.0)
             # self.get_logger().info(f"u: {u}")
 
         if self._ref_vel_configulator is not None:
@@ -815,6 +1146,29 @@ class MPCController(Node):
             self._mpc.update_v_max(ref_vel_kmph)
             v_ref: List[float] = [ref_vel_kmph] * len(self._reference_path.waypoints)
             self._reference_path.set_v_ref(v_ref)
+
+        if self.USE_LIDAR_OBSTACLES:
+            # 前方の他車に追いつかないよう速度の上限を落とす。ref_vel の更新は
+            # 毎周期やり直されるので、ここで下げても次の周期には元に戻る。
+            caps = []
+            if self._lead_gap is not None:
+                caps.append(("kart", self._lead_gap,
+                             max(float(np.sqrt(2.0 * self._gap_brake_decel
+                                               * max(self._lead_gap - self._gap_stop_distance, 0.0))),
+                                 self._gap_creep_speed)))
+            if self._lead_gap_box is not None:
+                caps.append(("box", self._lead_gap_box,
+                             max(float(np.sqrt(2.0 * self._gap_brake_decel
+                                               * max(self._lead_gap_box - self._box_stop_distance, 0.0))),
+                                 self._box_creep_speed)))
+            if caps:
+                src, d, v_cap = min(caps, key=lambda c: c[2])
+                v_now = float(self._mpc.input_constraints['umax'][0])
+                if v_cap < v_now:
+                    self._mpc.update_v_max(v_cap)
+                    self.get_logger().info(
+                        f"gap keeping ({src}): {d:.1f} m ahead, v_max {v_now:.1f} -> {v_cap:.1f} m/s",
+                        throttle_duration_sec=1.0)
 
         # override by brake command if control is disabled
         if not self._enable_control:
@@ -858,6 +1212,36 @@ class MPCController(Node):
         # apply low pass filter to control signal
         acc = self._last_acc + (acc - self._last_acc) * self._mpc_cfg.accel_low_pass_gain
         u[1] = self._last_u[1] + (u[1] - self._last_u[1]) * self._mpc_cfg.steer_low_pass_gain
+
+        # 押し当てからの脱出。「進めと指令しているのに動かない」が 3 秒続いたら
+        # 2.5 秒だけ後退する。E2E の生徒側の復帰層と同じ考え方で、教師データとしては
+        # この区間は使わない（後退中は実速度が負で、指令速度に大きな値を入れて
+        # 抽出側の「詰まり」判定に落とす）。
+        now_s = now.nanoseconds / 1e9
+        if self._reverse_until is not None:
+            if now_s < self._reverse_until:
+                acc = 1.2
+                u = np.array([5.0, self._reverse_steer])
+            else:
+                self._reverse_until = None
+                self._recover_cooldown_until = now_s + 2.0
+                self._publish_gear(False)
+                self.get_logger().warn("stuck recovery: back to DRIVE")
+        elif now_s >= self._recover_cooldown_until:
+            if abs(v) < 0.3 and u[0] > 1.0:
+                if self._stuck_since is None:
+                    self._stuck_since = now_s
+                elif now_s - self._stuck_since > 3.0:
+                    self._stuck_since = None
+                    self._reverse_until = now_s + 2.5
+                    self._reverse_steer = -float(np.sign(u[1]) or 1.0) * 0.3
+                    self._publish_gear(True)
+                    self.get_logger().warn(
+                        f"stuck recovery: commanded {u[0]:.1f} m/s but v={v:.2f}; reversing 2.5 s")
+                    acc = 1.2
+                    u = np.array([5.0, self._reverse_steer])
+            else:
+                self._stuck_since = None
 
         self._last_acc = acc
         self._last_u[0] = u[0]

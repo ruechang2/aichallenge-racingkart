@@ -157,10 +157,20 @@ class Map:
             cx_px, cy_px = self.w2m(obstacle.cx, obstacle.cy)
 
             # Add circular object to map
+            # 地図の外にかかる障害物はその分を切り落とす。切らないと部分的に外へ出た
+            # 円で boolean index の形が合わず IndexError でノードごと落ちる
+            # （LiDAR 由来の障害物が地図の縁の外に置かれて provider と MPC が両方死んだ）。
+            y0, y1 = cy_px - radius_px, cy_px + radius_px
+            x0, x1 = cx_px - radius_px, cx_px + radius_px
+            h, w = self.data.shape[0], self.data.shape[1]
+            if y1 <= 0 or x1 <= 0 or y0 >= h or x0 >= w:
+                continue
             y, x = np.ogrid[-radius_px: radius_px, -radius_px: radius_px]
             index = x ** 2 + y ** 2 <= radius_px ** 2
-            self.data[cy_px-radius_px:cy_px+radius_px, cx_px-radius_px:
-                                                cx_px+radius_px][index] = 0
+            cy0, cy1 = max(y0, 0), min(y1, h)
+            cx0, cx1 = max(x0, 0), min(x1, w)
+            index = index[cy0 - y0: index.shape[0] - (y1 - cy1), cx0 - x0: index.shape[1] - (x1 - cx1)]
+            self.data[cy0:cy1, cx0:cx1][index] = 0
 
     def add_boundary(self, boundaries):
         """
